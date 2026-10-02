@@ -10,6 +10,7 @@ import { writeFileSync } from 'node:fs';
 import { assertIsSignature, isSolanaError } from '@solana/kit';
 import { byteSize } from '../lib/byte-size.ts';
 import { stringifyJson } from '../lib/format.ts';
+import { transactionEffects } from '../effects/build.ts';
 import { normalizeTransaction, NormalizationError } from '../normalize/transaction.ts';
 import { renderSummary } from '../render/summary.ts';
 import { createRpc, resolveCommitment, resolveRpcUrl } from '../rpc/client.ts';
@@ -21,7 +22,7 @@ const EXIT_USAGE = 2;
 const EXIT_RPC_ERROR = 3;
 
 const USAGE = `
-Solana On-chain Intelligence Assistant — transaction inspector (Milestone 1)
+Solana On-chain Intelligence Assistant — transaction inspector
 
 Usage:
   npm run inspect -- <SIGNATURE> [options]
@@ -32,10 +33,12 @@ Options:
   --json               Print the normalized model as JSON (includes the raw RPC payload)
   --raw                Print only the raw getTransaction result as JSON
   --actions            Print only the ACTIONS section (decoded semantics)
-  --full-addresses     Print exact addresses in ACTIONS instead of abbreviated
+  --effects            Print only the EFFECTS section (value movement + net change)
+  --full-addresses     Print exact addresses in ACTIONS/EFFECTS instead of abbreviated
   --no-actions         Omit the ACTIONS section from the text summary
+  --no-effects         Omit the EFFECTS section from the text summary
   --no-logs            Omit program logs from the text summary
-  --out <file>         Also write { normalized, raw } JSON to <file>
+  --out <file>         Also write { normalized, effects, raw } JSON to <file>
   -h, --help           Show this help
 
 Exit codes:
@@ -47,6 +50,10 @@ Notes:
   ACTIONS are decoded from System / SPL Token / Associated Token Account
   instruction data only. Unknown programs stay unknown, and meaning is never
   inferred from balance changes.
+  EFFECTS add value movement and per-account net change on top: instruction-proven
+  flows are separated from amounts sized by exact balance reconciliation, anything
+  unexplained is listed as unattributed, and a failed transaction contributes
+  nothing but its fee.
 `.trim();
 
 interface Args {
@@ -58,6 +65,8 @@ interface Args {
   includeLogs: boolean;
   actionsOnly: boolean;
   noActions: boolean;
+  effectsOnly: boolean;
+  noEffects: boolean;
   fullAddresses: boolean;
   out: string | null;
   help: boolean;
@@ -73,6 +82,8 @@ function parseArgs(argv: readonly string[]): Args {
     includeLogs: true,
     actionsOnly: false,
     noActions: false,
+    effectsOnly: false,
+    noEffects: false,
     fullAddresses: false,
     out: null,
     help: false,
@@ -104,6 +115,12 @@ function parseArgs(argv: readonly string[]): Args {
         break;
       case '--no-actions':
         args.noActions = true;
+        break;
+      case '--effects':
+        args.effectsOnly = true;
+        break;
+      case '--no-effects':
+        args.noEffects = true;
         break;
       case '--full-addresses':
         args.fullAddresses = true;
@@ -234,16 +251,24 @@ async function main(): Promise<number> {
     return EXIT_RPC_ERROR;
   }
 
+  // The effects layer consumes the canonical model plus the decoded actions; it
+  // is computed once and shared by the JSON dumps and the text summary.
+  const effects = args.noEffects ? null : transactionEffects(normalized);
+
   if (args.out !== null) {
     writeFileSync(
       args.out,
-      `${stringifyJson({ normalized: stripRaw(normalized), raw: fetched.raw })}\n`,
+      `${stringifyJson({
+        normalized: stripRaw(normalized),
+        effects,
+        raw: fetched.raw,
+      })}\n`,
     );
-    console.error(`Wrote normalized + raw JSON to ${args.out}`);
+    console.error(`Wrote normalized + effects + raw JSON to ${args.out}`);
   }
 
   if (args.json) {
-    console.log(stringifyJson(normalized));
+    console.log(stringifyJson(effects === null ? normalized : { ...normalized, ...{ effects } }));
     return EXIT_OK;
   }
 
@@ -252,6 +277,8 @@ async function main(): Promise<number> {
       includeLogs: args.includeLogs,
       includeActions: !args.noActions,
       onlyActions: args.actionsOnly,
+      onlyEffects: args.effectsOnly,
+      effects,
       fullAddresses: args.fullAddresses,
     }),
   );

@@ -23,6 +23,42 @@ export type {
   UndecodedInstruction,
   UndecodedReason,
 } from './decode/actions.ts';
+// Milestone 3 effects layer: balances + decoded actions -> value movement, net
+// change per account, account lifecycle, and everything left unattributed.
+export { buildTransactionEffects, transactionEffects } from './effects/build.ts';
+export { toEffectsInput } from './effects/input.ts';
+export { NATIVE_MINT, isNativeMint } from './effects/native.ts';
+export { renderEffectsSection, formatUnits } from './render/effects.ts';
+export { abbreviateAddress } from './render/actions.ts';
+export type {
+  AccountCreatedEffect,
+  AccountLifecycleEffect,
+  AllowanceClearedEffect,
+  AllowanceSetEffect,
+  AmountSource,
+  EffectCommitState,
+  EffectConfidence,
+  EffectsAccountRow,
+  EffectsCounts,
+  EffectsDiagnostic,
+  EffectsInput,
+  EffectsTokenRow,
+  LifecycleKind,
+  OwnerMintNet,
+  Reconciliation,
+  SolAccountNet,
+  SolFlow,
+  SolFlowKind,
+  TokenAccountCreateEffect,
+  TokenAccountClosedEffect,
+  TokenAccountMintNet,
+  TokenFieldEvidence,
+  TokenFlow,
+  TokenFlowKind,
+  TransactionEffects,
+  UnattributedEffect,
+  UnattributedReason,
+} from './effects/model.ts';
 export { renderSummary } from './render/summary.ts';
 export { stringifyJson } from './lib/format.ts';
 export { fetchTransaction, TransactionFetchError } from './rpc/fetch-transaction.ts';

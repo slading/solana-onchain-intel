@@ -36,6 +36,14 @@ export interface ActionRenderOptions {
   readonly abbreviateAddresses?: boolean;
 }
 
+/**
+ * Abbreviates an address for display (`4…4`). Exported so every section uses one
+ * convention; the full value is always in the model and in `--json`.
+ */
+export function abbreviateAddress(value: string): string {
+  return abbreviate(value);
+}
+
 function abbreviate(value: string): string {
   if (value.length <= ADDRESS_PREFIX + ADDRESS_SUFFIX + 1) return value;
   return `${value.slice(0, ADDRESS_PREFIX)}…${value.slice(-ADDRESS_SUFFIX)}`;

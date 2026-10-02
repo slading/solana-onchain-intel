@@ -69,6 +69,9 @@ export const splToken = {
   setAuthority: (): number[] => [6, 0, 0],
 };
 
+/** `SyncNative` (tag 17): moves no lamports, so effects tests need the raw tag. */
+export const SYNC_NATIVE_TAG = 17;
+
 /* ------------------------------------------------------------------- System */
 
 export const system = {

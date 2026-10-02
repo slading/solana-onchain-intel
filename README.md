@@ -1,6 +1,7 @@
 # Solana On-chain Intelligence Assistant
 
-_This document is the Milestone 1 write-up; the Milestone 2 section is appended at the end._
+_This document is the Milestone 1 write-up; the Milestone 2 and Milestone 3 sections are
+appended at the end._
 
 Fetch a real transaction by signature from a Solana JSON-RPC endpoint, normalize it into
 our own model, and print a readable, deterministic CLI summary.
@@ -80,8 +81,10 @@ section by default — reproduce this exact output with `--no-actions`; see “M
 | `--no-logs` | Omit program logs from the text summary |
 | `--actions` | Print the `ACTIONS` section (default on) |
 | `--no-actions` | Omit `ACTIONS`, leaving the Milestone 1 output shape |
-| `--full-addresses` | Print full base58 addresses in `ACTIONS` instead of `4…4` abbreviations |
-| `--out <file>` | Also write `{ normalized, raw }` JSON to a file |
+| `--effects` | Print only the `EFFECTS` section (value movement + net change) |
+| `--no-effects` | Omit `EFFECTS` from the text summary |
+| `--full-addresses` | Print full base58 addresses in `ACTIONS`/`EFFECTS` instead of `4…4` abbreviations |
+| `--out <file>` | Also write `{ normalized, effects, raw }` JSON to a file |
 | `-h`, `--help` | Usage |
 
 ### Exit codes
@@ -237,7 +240,8 @@ DIAGNOSTICS
 ## Tests
 
 ```bash
-npm test          # 106 tests in Milestone 1 (240 with Milestone 2), no network, no mocking framework
+npm test          # 106 tests in Milestone 1, 240 with Milestone 2, 374 with Milestone 3
+                  # no network, no mocking framework
 ```
 
 Four layers:
@@ -255,7 +259,7 @@ Four layers:
 - **`tests/render.test.ts`** — a frozen golden summary, plus checks that output is
   byte-identical across runs and free of ANSI escapes.
 
-The five files added by Milestone 2 are described in that section below.
+The files added by Milestone 2 and Milestone 3 are described in their sections below.
 
 Fixtures (`fixtures/*.json`) are `{ provenance, request, response }` where `response` is the
 untouched `result`. Re-harvest with `npm run harvest:fixtures -- --search` (network; the
@@ -402,12 +406,209 @@ and fixed this way.
 Two fresh real mainnet fixtures were harvested for this milestone
 (`fixtures/token-mixed-approve.json`, `fixtures/token-mixed-closeAccount.json`).
 
-## Recommended Milestone 3
+## Milestone 3 — effects layer
 
-1. **Effects layer.** Join decoded actions with balance changes to answer *who paid whom and how
-   much net*, per mint and per lamport — the first place where balance data is legitimately
-   combined with decoded meaning, kept as a separate layer so actions stay pure.
-2. **Swap recognition — only with a spec in hand.** Program-by-program (e.g. Jupiter route
-   instructions), never by pattern-matching token flow.
-3. **Token-2022 extension coverage** and, if the intelligence layer needs it, CPI authority
-   tracing (which signer authorized each inner call).
+Milestone 2 answers *what the instructions mean*. Milestone 3 answers the transaction-level
+question: **who moved what, how much net, and what is proven versus merely consistent.**
+
+**In scope:** a separate `TransactionEffects` model that joins the canonical normalized data
+(boundary balances, account identities, token rows, fee) with `DecodedAction[]`; a deterministic
+`EFFECTS` section; reconciliation invariants; and explicit treatment of failed transactions.
+
+**Deliberately out of scope:** swap or DEX recognition, aggregator heuristics, price data, PnL,
+UI, database/indexer, LLM interpretation, and third-party providers. Nothing in this layer reads
+a raw RPC payload: it consumes the canonical model and the decoded actions only, and it never
+mutates or reinterprets a `DecodedAction`.
+
+### What it adds to the CLI
+
+```bash
+npm run inspect -- <signature> --effects          # only the EFFECTS section
+npm run inspect -- <signature> --no-effects       # the Milestone 2 shape
+```
+
+A real mainnet close-account transaction (`fixtures/token-mixed-closeAccount.json`), trimmed:
+
+```
+EFFECTS (committed)
+  11 proven by instruction data • 3 sized by balance reconciliation • 0 unattributed • 0 with an unobservable amount
+
+  SOL
+    21gs…vBNH: -0.000005 SOL charged by the network (no account in this transaction receives it; the burn/validator split is not claimed)  [fee]
+    21gs…vBNH → HiRn…fWsx: 0.00148844 SOL (1488440 lamports)  (account-create-deposit)  [2.1] system.createAccount
+    21gs…vBNH → HiRn…fWsx: 0.000185356 SOL (185356 lamports)  (transfer)  [5] system.transfer
+    HiRn…fWsx → A7mZ…9RBW: 0.000185356 SOL (185356 lamports)  (native-token-leg)  [7.1] spl-token.transferChecked
+    HiRn…fWsx → 21gs…vBNH: 0.00148844 SOL (1488440 lamports) (reconciled)  (account-close-return)  [8] spl-token.closeAccount
+
+  TOKEN (raw units; decimals are labels, not arithmetic)
+    token account HiRn…fWsx → token account A7mZ…9RBW: 185356 raw units (0.000185356)  (mint So11…1112) • owners 21gs…vBNH → 5wYc…rTdV • wrapped SOL: moved the same lamports too • authority 21gs…vBNH  [7.1] spl-token.transferChecked
+    …
+
+  NET SOL (exact, from the transaction's boundary balances)
+    21gs…vBNH (fee payer): -190356 lamports (-0.000190356 SOL)  [exactly explained]
+    A7mZ…9RBW: +185356 lamports (0.000185356 SOL)  [exactly explained]
+
+  NET TOKEN BY OWNER (aggregated over that owner's accounts of the mint; an owner is not a signer)
+    owner 5wYc…rTdV: -176691257 raw units of mint 4LjR…yUKK across 1 token account(s)  [exact]
+    …
+
+  LIFECYCLE
+    created associated token account HiRn…fWsx for owner 21gs…vBNH (mint So11…1112), paid by 21gs…vBNH: 1488440 lamports deposited  [2] associated-token-account.create
+    idempotent create did nothing: FfcK…ghhP already was an initialised token account  [3] associated-token-account.create
+    closed token account HiRn…fWsx (mint So11…1112, owner 21gs…vBNH); 1488440 lamports returned to 21gs…vBNH — the transaction created it, so none of this is rent it held: 1673796 lamports were paid in and 185356 spent (composition not provable)  [8] spl-token.closeAccount
+
+  notes (2):
+    info: [2] creates a token account; the lamport movement is the system.createAccount it makes at [2.1] (1488440 lamports), which is recorded as its own flow rather than counted twice.
+    info: [8] closes a wrapped-SOL account; the split between unwrapped SOL and the account's other lamports is not established, because its lamport history and its decoded wrapped-balance movements do not describe the same events — candidates are the instructions this layer does not decode: [2.0] getAccountDataSize, [2.2] initializeImmutableOwner, [2.3] initializeAccount3, [6] syncNative.
+```
+
+The last line is the point of the milestone: the transaction *can* be described completely as
+movements (every account reconciles exactly), and it *cannot* be described as "0.00148844 SOL of
+recovered rent", because a `syncNative` this layer does not decode took part in that balance. The
+output says so instead of choosing.
+
+### Three kinds of claim, and where each amount comes from
+
+| Confidence | Meaning |
+| --- | --- |
+| `proven` | The instruction data states it (a transfer amount, a create's lamports, a mint). |
+| `reconciled` | An instruction proves the *relationship*; the boundary balances show the *size* — what a close returned, what an ATA create deposited. |
+| `ambiguous` | A movement exists but its size, its counterparty, or its owner is not established. It is never promoted to a flow. |
+
+Every flow also carries an `amountSource`: `instruction-data`, `transaction-metadata` (the fee),
+`balance-reconciliation`, `residual-reconciliation`, or `not-observable`. `residual-reconciliation`
+is the one narrow case where a balance decides an amount: when a flow an instruction *already
+proved* is the only unreadable movement touching both of its endpoints and those endpoints agree
+on the size to the lamport, that remainder is that flow's amount. The relationship came from the
+instruction; reconciliation only measured it.
+
+### The rules the layer obeys
+
+1. **Instruction data proves relationships; balances prove amounts.** A delta alone is never
+   turned into a sender→receiver edge, a mint, or an owner.
+2. **Unattributed is a first-class result.** Whatever is left over is reported with its sign, its
+   account, its mint where applicable, and the undecoded instructions that *could* have moved it
+   (`unattributedEffects`), plus a diagnostic. Residuals are not absorbed into plausible flows.
+3. **Nothing is called a wallet.** Accounts are accounts; owners are whoever the token rows say.
+   A signer flag is reported where the model has one, never inferred from balances.
+4. **Token account, mint and owner stay separate.** `sourceTokenAccount`/`destinationTokenAccount`
+   are the token accounts the instruction named; owners are reported beside them, and the owner
+   aggregate (`netTokenByOwnerMint`) is labelled as an aggregate over that owner's accounts.
+5. **Raw units exactly.** Amounts are integer lamports or integer raw units. `decimals` is
+   presentation metadata copied from the rows, and the formatter's UI figure is computed with
+   integer arithmetic — never used to sum.
+6. **Created vs already there.** A create's deposit is distinguished from rent the account already
+   held: `lamportsAtStart` / `lamportsCredited` / `lamportsSpent` / `returnComposition`
+   (`own-lamports` | `in-transaction-lamports` | `mixed` | `not-provable`), claimed only when the
+   three terms reproduce the return exactly. Rent and dust are deliberately **not** separated —
+   that needs the rent-exempt minimum, a sysvar value this layer refuses to hardcode.
+7. **CPI nesting keeps its reference.** Every effect carries the `InstructionRef` of the
+   instruction that caused it (`[2.1] system.createAccount`, not "the transaction"), and a
+   duplicate outer claim is dropped with a note when an inner instruction states the same movement.
+8. **Unknown stays unknown.** Undecoded instructions remain undecoded; the effects layer only
+   names them as candidates, and only when they could actually be the cause (e.g. an undecoded
+   instruction *of the token program that owns the account*, or an undecoded System instruction).
+9. **A failed transaction commits the fee and nothing else.** Solana deducts the fee before
+   execution and rolls back every state change when any instruction fails (docs: *Fee Structure*,
+   *Transactions*). So instruction-derived effects are reported as `commitState: 'reverted'` in a
+   separate `DID NOT COMMIT` list, never as state; only the fee appears as committed. If a failed
+   transaction's balances show a change beyond the fee, that is a contradiction and is warned
+   about (`effects-reverted-state-changed`) rather than believed.
+
+### Wrapped SOL: semantics taken from the program source
+
+Two SPL Token behaviours decide how wrapped-SOL accounts are read, both from
+`token/program/src/processor.rs`:
+
+- `process_transfer` moves lamports 1:1 with the token amount when the source account `is_native`,
+  so a WSOL token transfer is *also* a lamport transfer. Those legs are recorded as
+  `kind: 'native-token-leg'` in `solFlows`, and a fixture-level invariant checks that
+  `WSOL token delta == lamport delta` for every untouched WSOL account.
+- `process_close_account` moves the account's whole lamport balance to the destination and deletes
+  the account, and a native account may be closed while holding units (non-native ones may not).
+  The units that leave with it are recorded as `kind: 'close-unwrap'` — not as a transfer or a burn,
+  because the mint's supply is not decremented; the matching lamport movement is the close's
+  `account-close-return` flow. Their size comes from the lamport composition, so when the two
+  histories disagree the units are recorded as unknown and the residual stays visible.
+- `process_mint_to` and `process_burn` reject a native account outright, so a `mintTo`/`burn`
+  can never imply a lamport leg; a fixture or synthetic payload that seems to do so is flagged.
+
+### Architecture
+
+```
+src/effects/native.ts     the wrapped-SOL rule (mint constant + `isNativeMint`)
+src/effects/model.ts      TransactionEffects and every record it contains
+src/effects/input.ts      the ONLY file that touches the canonical model (`toEffectsInput`)
+src/effects/claims.ts     decoded actions -> proven flows, mint cross-checks, lifecycle, allowances
+src/effects/reconcile.ts  the arithmetic: sizing, nets, invariants, close composition, unattributed
+src/effects/build.ts      transaction effects: committed/reverted split, counts, diagnostics
+src/render/effects.ts     the EFFECTS section (prints the model; computes nothing)
+```
+
+`transactionEffects(transaction)` is a pure function: same input, byte-identical JSON output
+(asserted for all six fixtures). The effects model is also exported from `src/index.ts` and
+`--json` carries it alongside the normalized model.
+
+### Invariants checked on every transaction
+
+- **Σ lamport deltas + fee = 0** — lamports are conserved apart from the fee (also asserted
+  fixture-by-fixture, independently of the layer's own diagnostics).
+- **Σ token deltas = minted − burned, per non-WSOL mint** — WSOL is excluded because a native
+  account's balance is a lamport claim, and closing one moves lamports rather than changing supply.
+- **WSOL token delta = lamport delta** for a WSOL account that was not created or closed.
+- **Flow bookkeeping** — every committed flow credits one account and debits another, so the
+  explained totals cancel against the fee; a flow aimed outside the transaction is warned about.
+- **Close rules** — a non-native account closed while its own row shows units is flagged; a close
+  whose amount can't be reconciled is left unsized.
+
+All six recorded fixtures produce **0 unattributed effects, 0 residual, 0 violated invariant**.
+
+### Tests
+
+`npm test` → **374 tests, 16 files, no network, no mocking framework.** Milestone 1 (106) and
+Milestone 2 (134) are untouched; Milestone 3 adds 134 tests in seven files:
+
+- `tests/effects.sol.test.ts` (16) — SOL flows: fee, transfers, CPI-mediated transfers, unreadable
+  amounts, missing/attributable fees, lamport conservation, purity.
+- `tests/effects.token.test.ts` (20) — transfers, mint/burn, mint conflicts and unreadable mints,
+  WSOL lamport legs, allowances as state (never value), owner-vs-account separation.
+- `tests/effects.lifecycle.test.ts` (13) — `createAccount`, ATA create (created / no-op /
+  not-provable), closes and where their lamports came from, wrapped-SOL closes and unwrapping.
+- `tests/effects.reconciliation.test.ts` (18) — no attribution from deltas alone, residual sizing
+  with both endpoints, unsized movements, the invariants, ambiguity reporting, and the narrow
+  input the layer is allowed to see.
+- `tests/effects.failed.test.ts` (10) — rolled-back transactions and the unknown-commitment case.
+- `tests/effects.fixtures.test.ts` (47) — every fixture: determinism, exact reconciliation, both
+  conservation invariants, commitment marking, and what each transaction proves.
+- `tests/render.effects.test.ts` (10) — a frozen golden summary for a synthetic transaction that
+  exercises every section, the failed-transaction output, section order, ablations, `--effects`,
+  full addresses, elision, and the wrapped-SOL close lines.
+
+Test helpers (`tests/helpers/effects.ts`) run the *real* pipeline — `decodeTransaction` then
+`buildTransactionEffects` — over hand-written balance rows, so no test can pass against a
+hypothetical shape the production path does not produce.
+
+### Semantics still unknown (deliberately)
+
+- **What an undecoded program did.** A residual it might explain is reported as unattributed with
+  the instruction named as a candidate; no meaning is assigned.
+- **Rent vs dust.** Not separated, by design (see rule 6).
+- **Who a non-signing authority is.** A multisig member, a program-derived address, or a delegate:
+  reported as "not a signer", never guessed.
+- **Fees paid by inner instructions.** Inner instructions have no fee of their own, and priority
+  fees are not attributed beyond the transaction fee.
+- **Anything about intent.** No swap recognition, no PnL, no price, no "this was a buy".
+
+## Recommended Milestone 4
+
+1. **Swap recognition — only with a spec in hand.** Program-by-program (e.g. Jupiter route
+   instructions with their account lists), never by pattern-matching token flow. The effects layer
+   is the right foundation: a swap is a *claim about intent* laid over flows that are already
+   proven, and the milestone should be judged on how it handles a route it does not recognise.
+2. **Token-2022 extension coverage.** Transfer fees, interest-bearing mints and metadata pointers
+   change what a token delta means; today they are decoded only for the base instruction set.
+3. **CPI authority tracing.** Which signer authorized each inner call, which would let a "not a
+   signer" authority be explained instead of merely reported.
+4. **An indexer-free multi-transaction view.** The effects model is per-transaction and pure;
+   the next useful question ("what did this account do today") needs a caller that can run it
+   over many signatures — not a database.

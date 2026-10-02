@@ -1,4 +1,5 @@
 import { renderActionSection } from './actions.ts';
+import { renderEffectsSection } from './effects.ts';
 import {
   formatLamportsWithSol,
   formatSigned,
@@ -12,6 +13,7 @@ import type {
   NormalizedTransaction,
   NormalizedTransactionVersion,
 } from '../model/transaction.ts';
+import type { TransactionEffects } from '../effects/model.ts';
 
 /**
  * Renders the deterministic, human-readable summary.
@@ -39,8 +41,16 @@ export interface RenderOptions {
   /** ACTIONS section (Milestone 2). Defaults to on when omitted. */
   readonly includeActions?: boolean;
   readonly onlyActions?: boolean;
-  /** Print exact addresses in ACTIONS instead of the readable abbreviation. */
+  /** Print exact addresses in ACTIONS/EFFECTS instead of the readable abbreviation. */
   readonly fullAddresses?: boolean;
+  /**
+   * The Milestone 3 effects model to render. The section appears exactly when an
+   * effects model is supplied — the renderer never computes one itself, so the
+   * text output and the model can never disagree about what was reconciled.
+   */
+  readonly effects?: TransactionEffects | null;
+  /** Print only the EFFECTS section (the CLI's `--effects`). */
+  readonly onlyEffects?: boolean;
 }
 
 function field(label: string, value: string): string {
@@ -114,6 +124,21 @@ export function renderSummary(
     lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
     lines.push('');
     lines.push(...renderActionSection(transaction.decoded, { abbreviateAddresses: options.fullAddresses !== true }));
+    return lines.join('\n');
+  }
+
+  if (options.onlyEffects === true) {
+    lines.push('');
+    lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
+    if (options.effects !== undefined && options.effects !== null) {
+      lines.push('');
+      lines.push(
+        ...renderEffectsSection(options.effects, { abbreviateAddresses: options.fullAddresses !== true }),
+      );
+    } else {
+      lines.push('');
+      lines.push('EFFECTS (not computed)');
+    }
     return lines.join('\n');
   }
 
@@ -219,6 +244,16 @@ export function renderSummary(
     lines.push('');
     lines.push(
       ...renderActionSection(transaction.decoded, {
+        abbreviateAddresses: options.fullAddresses !== true,
+      }),
+    );
+  }
+
+  // ------------------------------------------------------------------- effects
+  if (options.effects !== undefined && options.effects !== null) {
+    lines.push('');
+    lines.push(
+      ...renderEffectsSection(options.effects, {
         abbreviateAddresses: options.fullAddresses !== true,
       }),
     );
