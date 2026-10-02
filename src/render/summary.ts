@@ -1,3 +1,4 @@
+import { renderActionSection } from './actions.ts';
 import {
   formatLamportsWithSol,
   formatSigned,
@@ -35,6 +36,11 @@ function elide(text: string, limit: number): string {
 
 export interface RenderOptions {
   readonly includeLogs: boolean;
+  /** ACTIONS section (Milestone 2). Defaults to on when omitted. */
+  readonly includeActions?: boolean;
+  readonly onlyActions?: boolean;
+  /** Print exact addresses in ACTIONS instead of the readable abbreviation. */
+  readonly fullAddresses?: boolean;
 }
 
 function field(label: string, value: string): string {
@@ -100,6 +106,16 @@ export function renderSummary(
   options: RenderOptions,
 ): string {
   const lines: string[] = [];
+
+  // `--actions` prints just the semantic layer: the fastest way to see what a
+  // transaction *does* without reading nine balances sections.
+  if (options.onlyActions === true) {
+    lines.push('');
+    lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
+    lines.push('');
+    lines.push(...renderActionSection(transaction.decoded, { abbreviateAddresses: options.fullAddresses !== true }));
+    return lines.join('\n');
+  }
 
   lines.push('');
   lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
@@ -197,6 +213,16 @@ export function renderSummary(
         lines.push(...renderInstruction(inner, `[${group.outerIndex}.${inner.index}]`, '      '));
       });
     });
+
+  // ------------------------------------------------------------------- actions
+  if (options.includeActions !== false) {
+    lines.push('');
+    lines.push(
+      ...renderActionSection(transaction.decoded, {
+        abbreviateAddresses: options.fullAddresses !== true,
+      }),
+    );
+  }
 
   // ------------------------------------------------------------- SOL balance changes
   lines.push('');

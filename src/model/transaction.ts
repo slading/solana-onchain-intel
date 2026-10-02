@@ -12,9 +12,16 @@
  *    ourselves.
  * 3. **Raw is always reachable.** `NormalizedTransaction.raw` holds the exact
  *    `getTransaction` result object this model was built from.
- * 4. **Deterministic output.** All collections have a defined order (see each
+ * 4. **Semantics are derived, not re-read.** `decoded` holds the Milestone 2
+ *    action layer, computed from the normalized instructions alone (see
+ *    `src/decode/`). It is part of the model so that rendering and any later
+ *    consumer share one interpretation, but it is always derived from
+ *    `instructions` — never from balances, logs or the raw payload.
+ * 5. **Deterministic output.** All collections have a defined order (see each
  *    field), so two runs over the same response render identical text.
  */
+
+import type { DecodedTransaction } from '../decode/actions.ts';
 
 /**
  * The transaction version as reported by the RPC.
@@ -215,6 +222,12 @@ export interface NormalizedTransaction {
 
   readonly diagnostics: readonly NormalizedDiagnostic[];
   readonly provenance: NormalizedProvenance;
+
+  /**
+   * Semantic actions decoded from the instructions above (Milestone 2).
+   * Derived purely from `instructions`; instructional data only, never balances.
+   */
+  readonly decoded: DecodedTransaction;
 
   /** The exact `getTransaction` result this model was built from. */
   readonly raw: unknown;

@@ -6,6 +6,7 @@ import type {
   NormalizedTransaction,
   NormalizedTransactionVersion,
 } from '../model/transaction.ts';
+import { decodeTransaction } from '../decode/decode.ts';
 import { normalizeSolBalanceChanges, normalizeTokenBalanceChanges } from './balances.ts';
 import { DiagnosticCollector } from './diagnostics.ts';
 import { normalizeInnerInstructions, normalizeTopLevelInstructions } from './instructions.ts';
@@ -245,6 +246,9 @@ export function normalizeTransaction(
     transactionConfig: pick(message, 'transactionConfig') ?? null,
     diagnostics: diagnostics.collect(),
     provenance: options.provenance,
+    // Milestone 2 semantic layer. Derived from `instructions` only, so it is
+    // deterministic and cannot be influenced by balances, logs or the raw payload.
+    decoded: decodeTransaction({ instructions, innerInstructionGroups }),
     raw: rawResult,
   };
 }

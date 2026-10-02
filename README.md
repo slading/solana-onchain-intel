@@ -1,4 +1,6 @@
-# Solana On-chain Intelligence Assistant — Milestone 1
+# Solana On-chain Intelligence Assistant
+
+_This document is the Milestone 1 write-up; the Milestone 2 section is appended at the end._
 
 Fetch a real transaction by signature from a Solana JSON-RPC endpoint, normalize it into
 our own model, and print a readable, deterministic CLI summary.
@@ -64,6 +66,9 @@ TOKEN BALANCE CHANGES
       delta  -4774791332475 raw units (pre and post reported)
 ```
 
+*(Sample above is the Milestone 1 output shape. The CLI now also prints an `ACTIONS`
+section by default — reproduce this exact output with `--no-actions`; see “Milestone 2” below.)*
+
 ### Options
 
 | Flag | Meaning |
@@ -73,6 +78,9 @@ TOKEN BALANCE CHANGES
 | `--json` | Print the normalized model as JSON (includes the raw payload) |
 | `--raw` | Print only the raw `getTransaction` result |
 | `--no-logs` | Omit program logs from the text summary |
+| `--actions` | Print the `ACTIONS` section (default on) |
+| `--no-actions` | Omit `ACTIONS`, leaving the Milestone 1 output shape |
+| `--full-addresses` | Print full base58 addresses in `ACTIONS` instead of `4…4` abbreviations |
 | `--out <file>` | Also write `{ normalized, raw }` JSON to a file |
 | `-h`, `--help` | Usage |
 
@@ -97,8 +105,11 @@ src/
     balances.ts             lamport and token delta computation
     diagnostics.ts          collects "here is what we do not know"
   model/transaction.ts      the canonical model + the rules it obeys
-  render/summary.ts         deterministic text rendering
+  render/
+    summary.ts              deterministic text rendering
+    actions.ts              the ACTIONS section (Milestone 2)
   lib/                      read-json (untrusted input), format (bigint/locale-safe), byte-size
+  decode/                   Milestone 2 only: instruction -> meaning; see that section
 ```
 
 Three stages, no framework:
@@ -226,7 +237,7 @@ DIAGNOSTICS
 ## Tests
 
 ```bash
-npm test          # 88 tests, no network, no mocking framework
+npm test          # 106 tests in Milestone 1 (240 with Milestone 2), no network, no mocking framework
 ```
 
 Four layers:
@@ -243,6 +254,8 @@ Four layers:
 - **`tests/normalize.kit-transformed.test.ts`** — see the note below.
 - **`tests/render.test.ts`** — a frozen golden summary, plus checks that output is
   byte-identical across runs and free of ANSI escapes.
+
+The five files added by Milestone 2 are described in that section below.
 
 Fixtures (`fixtures/*.json`) are `{ provenance, request, response }` where `response` is the
 untouched `result`. Re-harvest with `npm run harvest:fixtures -- --search` (network; the
@@ -278,9 +291,123 @@ every skip).
 8. **`blockTime` is an estimate** and can be `null`; `slot` is the canonical ordering key.
 9. **No caching and no retries in the CLI** — one RPC call per invocation, by design.
 
-## Next steps (Milestone 2, not implemented here)
+## Milestone 2 — semantic decoding layer
 
-Decoders as pure functions over `NormalizedTransaction`: System Program and SPL Token
-instruction decoding (including inner instructions), token balance-change interpretation,
-swap detection, and then whatever the intelligence layer needs — all without changing the
-fetch or render layers.
+Milestone 1 answers *what happened mechanically* (accounts, instructions, balances). Milestone 2
+answers *what the instructions mean* — deterministically, from instruction data, with no guessing.
+
+**In scope:** decode System Program, SPL Token Program and Associated Token Account Program
+instructions into a separate `DecodedAction` layer; print a concise `ACTIONS` section; test
+valid / malformed / partial / unknown instructions and both decoding paths.
+
+**Still out of scope:** swap interpretation, Token-2022 extensions, fee attribution, UI,
+LLM interpretation, third-party data providers.
+
+### What it adds to the CLI
+
+```text
+ACTIONS (13 decoded, 16 not decoded, from 29 instruction(s))
+  [2]       associated-token-account.create   CreateIdempotent  ata=Cr5v…qAeh  wallet=E5JX…YTir  mint=So11…1112  payer=E5JX…YTir  tokenProgram=Toke…Q5DA  [rpc-parsed]
+  [2.1]     system.createAccount              0.00148844 SOL (1488440 lamports)  space=165 bytes  owner=Toke…Q5DA  from=E5JX…YTir  newAccount=Cr5v…qAeh  [rpc-parsed]
+  [3.2]     spl-token.transferChecked         2729270725642 raw units  decimals=6  mint=9pJW…9ZMr  source=CLD7…ruTt  destination=7Tfu…ThcH  authority=E5JX…YTir  [rpc-parsed]
+  … 10 more transferChecked / transfer / closeAccount lines, in instruction order
+  [4]       spl-token.closeAccount            account=Cr5v…qAeh  destination=E5JX…YTir  authority=E5JX…YTir  [rpc-parsed]
+
+  not decoded (16); unknown programs stay unknown:
+    (13) program not decoded by this layer: [0] ComputeBudget111111111111111111111111111111  •  [1] ComputeBudget111111111111111111111111111111  •  [3] JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4  •  (+10 more)
+    (3) recognized instruction, outside the Milestone 2 target set: [2.0] TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA [spl-token]  rpc-parsed-as=getAccountDataSize  •  [2.2] … rpc-parsed-as=initializeImmutableOwner  •  [2.3] … rpc-parsed-as=initializeAccount3
+
+  decoded from instruction data only — never from balance changes.
+```
+
+Every action line carries a `ref` (`[2.1]` = inner instruction 1 of top-level instruction 2,
+matching the `INSTRUCTIONS` section), the fields the instruction data actually proves, and the
+evidence it came from (`bytes` or `rpc-parsed`). Addresses are abbreviated `4…4` by default;
+`--full-addresses` prints them in full. `--no-actions` restores the Milestone 1 output shape.
+
+### Architecture
+
+```
+src/decode/
+  actions.ts                  DecodedAction / DecodedTransaction model, refLabel
+  bytes.ts                    byte readers (u8/u32/u64 LE, pubkey), takeAccountRoles
+  programs.ts                 program ids, name tables, ProgramDecoder contract, decode results
+  system.ts                   System Program
+  spl-token.ts                SPL Token + Token-2022 (one factory, two ids)
+  associated-token-account.ts ATA
+  decode.ts                   PROGRAM_DECODERS, decodeInstruction, decodeTransaction, actionKinds
+src/render/actions.ts         renderActionSection, describeAction
+```
+
+Rules the layer obeys, by construction:
+
+1. **Decoders consume normalized instructions, never RPC payloads.** They receive a narrow
+   `DecodableTransactionView` that exposes instructions only — balances, logs and raw payload are
+   unreachable from decoder code, so a balance delta *cannot* be turned into an action even by
+   accident.
+2. **The Milestone 1 model is unchanged.** `decoded` is one additive optional field on
+   `NormalizedTransaction`; nothing in `src/normalize/*` was refactored.
+3. **Two independent evidence paths, one meaning.** Where the node returned a parsed instruction
+   *and* the raw bytes exist, both are decoded; raw instruction-data bytes win when both are
+   present, and a dual-path test asserts the two paths produce identical meaning on a shared
+   table of vectors. A field that cannot be read stays `null` and gets a diagnostic — never an
+   inferred value.
+4. **Unknown stays unknown.** Undecoded instructions keep a specific reason
+   (`program-not-supported`, `instruction-not-in-scope`, `unknown-instruction-tag`,
+   `malformed-instruction-data`, `no-decoding-evidence`, `program-id-missing`) and are grouped
+   as such in the render. A recognized program with an instruction outside the Milestone 2 target
+   set (e.g. `setAuthority`, `syncNative`) is reported as *not in scope*, never as an unknown
+   program — and a program label (e.g. `saber-stableswap`) is reported as a **label, not meaning**.
+
+### Semantics proven (verified against official sources and real mainnet data)
+
+| Action | Program | Evidence |
+| --- | --- | --- |
+| `system.transfer`, `system.createAccount` | `11111111111111111111111111111111` | bincode ⇒ u32-LE tags, field order from `system-interface/src/instruction.rs`; real fixtures |
+| `spl-token.transfer`, `transferChecked`, `mintTo`, `mintToChecked`, `burn`, `burnChecked`, `approve`, `revoke`, `closeAccount` | `Tokenkeg…`, `TokenzQd…` (Token-2022 superset) | tags/account order from `token/interface/src/instruction.rs`; real fixtures for transfer/approve/closeAccount; spec-derived byte vectors for the rest |
+| `associated-token-account.create` / `createIdempotent` | `ATokenGPv…` | enum order from the ATA interface; empty data ⇒ `Create` (from `processor.rs`); real fixtures |
+
+`parsed.info` field names come from reading Agave's `parse_token.rs` / `parse_system.rs` /
+`parse_associated_token.rs`, **not** from the spec names — they differ (non-checked
+`mintTo`/`burn` carry a bare `amount`, checked variants nest `tokenAmount{amount,decimals}`;
+multisig authorities replace the plain key and add `signers[]`). One real mapping bug was found
+and fixed this way.
+
+### Semantics still unknown (deliberately)
+
+- **Swap and aggregator semantics** — Jupiter, ComputeBudget and vote programs appear in real
+  fixtures as opaque instructions (`program-not-supported`). No spec, no meaning.
+- **Token-2022 extensions** — recognized as Token-2022, decoded only for the base instruction set.
+- **Effects and attribution** — which signer ultimately *paid*, CPI authority chains, and net
+  per-mint flow are not derived; actions are statements about instruction data, nothing more.
+- **Fee attribution beyond the transaction fee** — inner instructions have no fee of their own.
+
+### Tests
+
+`npm test` → **240 tests, 9 files, no network, no mocking framework.** Milestone 1's 106 tests
+(all four original files, unmodified) still pass; the new files are:
+
+- `tests/decode.bytes.test.ts` (36) — the byte path over spec-derived vectors.
+- `tests/decode.parsed.test.ts` (26) — the `rpc-parsed` path over Agave's real field names,
+  including multisig variants and partial info.
+- `tests/decode.dual-path.test.ts` (16) — same instruction expressed as bytes and as node parse
+  must yield the same meaning (`evidence` excluded from the comparison).
+- `tests/decode.transaction.test.ts` (41) — accounting over every real fixture: every
+  instruction is either decoded or attributed to a reason, refs resolve, decoding is
+  deterministic, and **decoding never depends on balance deltas** (fixtures with rolled-back
+  balances decode identically).
+- `tests/render.actions.test.ts` (15) — the section's counts, lines, refs, grouping,
+  abbreviation, totals, notes, determinism, and `--no-actions` compatibility.
+
+Two fresh real mainnet fixtures were harvested for this milestone
+(`fixtures/token-mixed-approve.json`, `fixtures/token-mixed-closeAccount.json`).
+
+## Recommended Milestone 3
+
+1. **Effects layer.** Join decoded actions with balance changes to answer *who paid whom and how
+   much net*, per mint and per lamport — the first place where balance data is legitimately
+   combined with decoded meaning, kept as a separate layer so actions stay pure.
+2. **Swap recognition — only with a spec in hand.** Program-by-program (e.g. Jupiter route
+   instructions), never by pattern-matching token flow.
+3. **Token-2022 extension coverage** and, if the intelligence layer needs it, CPI authority
+   tracing (which signer authorized each inner call).

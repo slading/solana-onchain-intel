@@ -31,6 +31,9 @@ Options:
   --commitment <level> processed | confirmed | finalized (default: $SOLANA_COMMITMENT, else confirmed)
   --json               Print the normalized model as JSON (includes the raw RPC payload)
   --raw                Print only the raw getTransaction result as JSON
+  --actions            Print only the ACTIONS section (decoded semantics)
+  --full-addresses     Print exact addresses in ACTIONS instead of abbreviated
+  --no-actions         Omit the ACTIONS section from the text summary
   --no-logs            Omit program logs from the text summary
   --out <file>         Also write { normalized, raw } JSON to <file>
   -h, --help           Show this help
@@ -41,6 +44,9 @@ Exit codes:
 Notes:
   Only Solana JSON-RPC is used: no third-party indexers, no databases, no LLMs.
   Instructions the RPC does not decode are reported as UNKNOWN, never interpreted.
+  ACTIONS are decoded from System / SPL Token / Associated Token Account
+  instruction data only. Unknown programs stay unknown, and meaning is never
+  inferred from balance changes.
 `.trim();
 
 interface Args {
@@ -50,6 +56,9 @@ interface Args {
   json: boolean;
   raw: boolean;
   includeLogs: boolean;
+  actionsOnly: boolean;
+  noActions: boolean;
+  fullAddresses: boolean;
   out: string | null;
   help: boolean;
 }
@@ -62,6 +71,9 @@ function parseArgs(argv: readonly string[]): Args {
     json: false,
     raw: false,
     includeLogs: true,
+    actionsOnly: false,
+    noActions: false,
+    fullAddresses: false,
     out: null,
     help: false,
   };
@@ -86,6 +98,15 @@ function parseArgs(argv: readonly string[]): Args {
         break;
       case '--no-logs':
         args.includeLogs = false;
+        break;
+      case '--actions':
+        args.actionsOnly = true;
+        break;
+      case '--no-actions':
+        args.noActions = true;
+        break;
+      case '--full-addresses':
+        args.fullAddresses = true;
         break;
       case '-h':
       case '--help':
@@ -226,7 +247,14 @@ async function main(): Promise<number> {
     return EXIT_OK;
   }
 
-  console.log(renderSummary(normalized, { includeLogs: args.includeLogs }));
+  console.log(
+    renderSummary(normalized, {
+      includeLogs: args.includeLogs,
+      includeActions: !args.noActions,
+      onlyActions: args.actionsOnly,
+      fullAddresses: args.fullAddresses,
+    }),
+  );
   console.log(
     `  source: ${rpcEndpoint} (${commitment}, encoding ${fetched.provenance.encoding}) • ` +
       `raw payload ${byteSize(stringifyJson(fetched.raw, 0))} • use --json / --raw for full data`,

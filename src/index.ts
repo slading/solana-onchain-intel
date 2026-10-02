@@ -7,6 +7,22 @@
  * swap detection) plug in *after* normalization without touching the RPC layer.
  */
 export { normalizeTransaction, NormalizationError } from './normalize/transaction.ts';
+// Milestone 2 semantic layer: decodes normalized instructions into actions.
+export { decodeTransaction, decodeInstruction, PROGRAM_DECODERS } from './decode/decode.ts';
+export { refLabel } from './decode/actions.ts';
+export { describeAction, renderActionSection } from './render/actions.ts';
+export type {
+  ActionKind,
+  ActionPayload,
+  DecodedAction,
+  DecodedProgramLabel,
+  DecodedTransaction,
+  DecodeDiagnostic,
+  DecodeEvidence,
+  InstructionRef,
+  UndecodedInstruction,
+  UndecodedReason,
+} from './decode/actions.ts';
 export { renderSummary } from './render/summary.ts';
 export { stringifyJson } from './lib/format.ts';
 export { fetchTransaction, TransactionFetchError } from './rpc/fetch-transaction.ts';
