@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+
+    "skipLibCheck": true,
+    "noEmit": true,
+    // We run TypeScript directly (tsx / vitest) and never emit JS, so explicit
+    // .ts specifiers are fine — and they match Node's native type-stripping rules.
+    "allowImportingTsExtensions": true
+  },
+  "include": ["src", "tests", "vitest.config.ts"]
+}

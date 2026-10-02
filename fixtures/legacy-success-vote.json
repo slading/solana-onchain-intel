@@ -1,0 +1,223 @@
+{
+  "provenance": {
+    "source": "https://api.mainnet-beta.solana.com",
+    "method": "getTransaction",
+    "fetchedAtUtc": "2026-10-02T14:43:43.373Z",
+    "note": "Real mainnet legacy (unversioned) vote transaction {\"version\":\"legacy\",\"failed\":false,\"inner\":0,\"pre\":0,\"ix\":1}"
+  },
+  "request": {
+    "signature": "3jH6DXAZota9gfXG828y314JCb7mccvWPhTQm7ZD1bP5cQmNRkiDaUXiv98Lorkx1JA4wexbJrEhmLEKf5nQRo2E",
+    "config": {
+      "encoding": "jsonParsed",
+      "commitment": "finalized",
+      "maxSupportedTransactionVersion": 1
+    }
+  },
+  "response": {
+    "blockTime": 1790952213,
+    "meta": {
+      "computeUnitsConsumed": 2100,
+      "costUnits": 3465,
+      "err": null,
+      "fee": 5000,
+      "innerInstructions": [],
+      "logMessages": [
+        "Program Vote111111111111111111111111111111111111111 invoke [1]",
+        "Program Vote111111111111111111111111111111111111111 success"
+      ],
+      "postBalances": [
+        31322154615,
+        190852061986,
+        1
+      ],
+      "postTokenBalances": [],
+      "preBalances": [
+        31322159615,
+        190852061986,
+        1
+      ],
+      "preTokenBalances": [],
+      "rewards": [],
+      "status": {
+        "Ok": null
+      }
+    },
+    "slot": 452640625,
+    "transaction": {
+      "message": {
+        "accountKeys": [
+          {
+            "pubkey": "sCANXAaS1a7yB8jz3USvGNLfd8DSc9r7TNzNSKKPkfY",
+            "signer": true,
+            "source": "transaction",
+            "writable": true
+          },
+          {
+            "pubkey": "21oUQzzytWh6y3G3SQ7ehktMh1RrbsJNA4R5pAMNyyrG",
+            "signer": false,
+            "source": "transaction",
+            "writable": true
+          },
+          {
+            "pubkey": "Vote111111111111111111111111111111111111111",
+            "signer": false,
+            "source": "transaction",
+            "writable": false
+          }
+        ],
+        "instructions": [
+          {
+            "parsed": {
+              "info": {
+                "towerSync": {
+                  "blockId": "7ztqFnWqqVHGhuHCyv682MyLBdyYbsw4YG6UM3uFPG8r",
+                  "hash": "3dzoNVADQeG2WGTScc5mdFkrmgJwVQm3hgfj6W8SFES7",
+                  "lockouts": [
+                    {
+                      "confirmation_count": 31,
+                      "slot": 452640594
+                    },
+                    {
+                      "confirmation_count": 30,
+                      "slot": 452640595
+                    },
+                    {
+                      "confirmation_count": 29,
+                      "slot": 452640596
+                    },
+                    {
+                      "confirmation_count": 28,
+                      "slot": 452640597
+                    },
+                    {
+                      "confirmation_count": 27,
+                      "slot": 452640598
+                    },
+                    {
+                      "confirmation_count": 26,
+                      "slot": 452640599
+                    },
+                    {
+                      "confirmation_count": 25,
+                      "slot": 452640600
+                    },
+                    {
+                      "confirmation_count": 24,
+                      "slot": 452640601
+                    },
+                    {
+                      "confirmation_count": 23,
+                      "slot": 452640602
+                    },
+                    {
+                      "confirmation_count": 22,
+                      "slot": 452640603
+                    },
+                    {
+                      "confirmation_count": 21,
+                      "slot": 452640604
+                    },
+                    {
+                      "confirmation_count": 20,
+                      "slot": 452640605
+                    },
+                    {
+                      "confirmation_count": 19,
+                      "slot": 452640606
+                    },
+                    {
+                      "confirmation_count": 18,
+                      "slot": 452640607
+                    },
+                    {
+                      "confirmation_count": 17,
+                      "slot": 452640608
+                    },
+                    {
+                      "confirmation_count": 16,
+                      "slot": 452640609
+                    },
+                    {
+                      "confirmation_count": 15,
+                      "slot": 452640610
+                    },
+                    {
+                      "confirmation_count": 14,
+                      "slot": 452640611
+                    },
+                    {
+                      "confirmation_count": 13,
+                      "slot": 452640612
+                    },
+                    {
+                      "confirmation_count": 12,
+                      "slot": 452640613
+                    },
+                    {
+                      "confirmation_count": 11,
+                      "slot": 452640614
+                    },
+                    {
+                      "confirmation_count": 10,
+                      "slot": 452640615
+                    },
+                    {
+                      "confirmation_count": 9,
+                      "slot": 452640616
+                    },
+                    {
+                      "confirmation_count": 8,
+                      "slot": 452640617
+                    },
+                    {
+                      "confirmation_count": 7,
+                      "slot": 452640618
+                    },
+                    {
+                      "confirmation_count": 6,
+                      "slot": 452640619
+                    },
+                    {
+                      "confirmation_count": 5,
+                      "slot": 452640620
+                    },
+                    {
+                      "confirmation_count": 4,
+                      "slot": 452640621
+                    },
+                    {
+                      "confirmation_count": 3,
+                      "slot": 452640622
+                    },
+                    {
+                      "confirmation_count": 2,
+                      "slot": 452640623
+                    },
+                    {
+                      "confirmation_count": 1,
+                      "slot": 452640624
+                    }
+                  ],
+                  "root": 452640593,
+                  "timestamp": 1790952213
+                },
+                "voteAccount": "21oUQzzytWh6y3G3SQ7ehktMh1RrbsJNA4R5pAMNyyrG",
+                "voteAuthority": "sCANXAaS1a7yB8jz3USvGNLfd8DSc9r7TNzNSKKPkfY"
+              },
+              "type": "towersync"
+            },
+            "program": "vote",
+            "programId": "Vote111111111111111111111111111111111111111",
+            "stackHeight": 1
+          }
+        ],
+        "recentBlockhash": "BZ6VeHApmgCXn9s4x6zK9zgg6dh26ELDjowS7PoGHx6r"
+      },
+      "signatures": [
+        "3jH6DXAZota9gfXG828y314JCb7mccvWPhTQm7ZD1bP5cQmNRkiDaUXiv98Lorkx1JA4wexbJrEhmLEKf5nQRo2E"
+      ]
+    },
+    "transactionIndex": 1447,
+    "version": "legacy"
+  }
+}
