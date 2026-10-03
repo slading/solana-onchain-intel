@@ -70,7 +70,7 @@ const UNKNOWN = 'unknown';
 
 /* --------------------------------------------------------------- instructions */
 
-function refOf(instruction: NormalizedInstruction): InstructionRef {
+export function refOf(instruction: NormalizedInstruction): InstructionRef {
   return {
     path: instruction.outerIndex === null ? 'top-level' : 'inner',
     index: instruction.index,
@@ -80,11 +80,11 @@ function refOf(instruction: NormalizedInstruction): InstructionRef {
 }
 
 /** Stable key for matching a decoded action back to its instruction. */
-function refKey(ref: InstructionRef): string {
+export function refKey(ref: InstructionRef): string {
   return `${ref.path}:${ref.outerIndex ?? '-'}:${ref.index}`;
 }
 
-function allInstructions(transaction: NormalizedTransaction): readonly NormalizedInstruction[] {
+export function allInstructions(transaction: NormalizedTransaction): readonly NormalizedInstruction[] {
   const out: NormalizedInstruction[] = [];
   for (const instruction of transaction.instructions) out.push(instruction);
   for (const group of transaction.innerInstructionGroups) {
@@ -103,7 +103,7 @@ function allInstructions(transaction: NormalizedTransaction): readonly Normalize
  * same way with its whole group as the candidate list. Returns `ok: false` when
  * the group or the depths needed for the claim are missing.
  */
-function cpiSubtree(
+export function cpiSubtree(
   transaction: NormalizedTransaction,
   instruction: NormalizedInstruction,
 ): { readonly ok: boolean; readonly detail: string; readonly instructions: readonly NormalizedInstruction[] } {
@@ -152,7 +152,7 @@ function cpiSubtree(
 
 /* -------------------------------------------------------------------- actions */
 
-interface TransferLeg {
+export interface TransferLeg {
   readonly ref: InstructionRef;
   readonly kind: ActionKind;
   readonly source: string | null;
@@ -168,7 +168,7 @@ interface TransferLeg {
  * `transferChecked` carries the mint while a plain `transfer` does not — and the
  * mint is needed, so a plain transfer can only ever be a *partially* proven side.
  */
-function transferLeg(action: DecodedAction): TransferLeg | null {
+export function transferLeg(action: DecodedAction): TransferLeg | null {
   switch (action.kind) {
     case 'spl-token.transfer':
       return {
@@ -197,24 +197,24 @@ function transferLeg(action: DecodedAction): TransferLeg | null {
 
 /* ---------------------------------------------------------------- checks ---- */
 
-function check(id: string, outcome: DlmmCheckOutcome, detail: string, required = true): DlmmSwapCheck {
+export function check(id: string, outcome: DlmmCheckOutcome, detail: string, required = true): DlmmSwapCheck {
   return { id, required, outcome, detail };
 }
 
-const pass = (id: string, detail: string, required = true): DlmmSwapCheck =>
+export const pass = (id: string, detail: string, required = true): DlmmSwapCheck =>
   check(id, 'pass', detail, required);
-const fail = (id: string, detail: string, required = true): DlmmSwapCheck =>
+export const fail = (id: string, detail: string, required = true): DlmmSwapCheck =>
   check(id, 'fail', detail, required);
-const unchecked = (id: string, detail: string, required = true): DlmmSwapCheck =>
+export const unchecked = (id: string, detail: string, required = true): DlmmSwapCheck =>
   check(id, 'not-checkable', detail, required);
 
 /* ---------------------------------------------------------------- the layer - */
 
-function commitStateOf(status: NormalizedTransaction['status']): DlmmCommitState {
+export function commitStateOf(status: NormalizedTransaction['status']): DlmmCommitState {
   return status === 'success' ? 'committed' : status === 'failed' ? 'reverted' : 'unknown';
 }
 
-interface OwnerFact {
+export interface OwnerFact {
   readonly owner: string;
   readonly evidence: DlmmOwnerEvidence;
 }
@@ -229,7 +229,7 @@ interface OwnerFact {
  * SOL account is) would have no owner at all, since the RPC reports no row for it.
  * Nothing is ever derived from an authority field.
  */
-function tokenAccountOwners(transaction: NormalizedTransaction): ReadonlyMap<string, OwnerFact> {
+export function tokenAccountOwners(transaction: NormalizedTransaction): ReadonlyMap<string, OwnerFact> {
   const owners = new Map<string, OwnerFact>();
   for (const action of transaction.decoded.actions) {
     if (action.kind !== 'associated-token-account.create') continue;
@@ -648,8 +648,8 @@ function recognizeSwap2(context: RecognizeSwap2Input): DlmmSwapLeg {
   );
 
   /* 11: reconcile both transfers with the Milestone 3 effects model. */
-  checks.push(reconcileWithEffects('input-reconciles-with-effects', inLeg, inSide, commitState, effects));
-  checks.push(reconcileWithEffects('output-reconciles-with-effects', outLeg, outSide, commitState, effects));
+  checks.push(reconcileWithEffects('input-reconciles-with-effects', inLeg, input.mint, commitState, effects));
+  checks.push(reconcileWithEffects('output-reconciles-with-effects', outLeg, output.mint, commitState, effects));
   if (effects === null) unknowns.push('effects-model-absent');
 
   /* 12: commitment. */
@@ -780,7 +780,7 @@ function sideFrom(
 }
 
 /** The pool-side account a transfer touched: the endpoint that is not the user's. */
-function counterpartyOf(leg: TransferLeg | null, tokenAccount: string | null): string | null {
+export function counterpartyOf(leg: TransferLeg | null, tokenAccount: string | null): string | null {
   if (leg === null) return null;
   return leg.destination === tokenAccount ? leg.source : leg.destination;
 }
@@ -794,10 +794,10 @@ function counterpartyOf(leg: TransferLeg | null, tokenAccount: string | null): s
  * a missing effects model is `not-checkable`, which is why no leg is `proven`
  * without one.
  */
-function reconcileWithEffects(
+export function reconcileWithEffects(
   id: string,
   leg: TransferLeg | null,
-  side: SidedSide,
+  mint: string | null,
   commitState: DlmmCommitState,
   effects: TransactionEffects | null,
 ): DlmmSwapCheck {
@@ -848,7 +848,7 @@ function reconcileWithEffects(
       `${refLabel(leg.ref)} is sized by ${flow.amountSource} in the effects model, not stated by instruction data`,
     );
   }
-  if (flow.mint === null && side.side.mint !== null) {
+  if (flow.mint === null && mint !== null) {
     return unchecked(
       id,
       `${refLabel(leg.ref)} carries no mint evidence in the effects model (a plain transfer does not state one)`,
@@ -874,7 +874,7 @@ function reconcileWithEffects(
  * any required condition that could not be evaluated ⇒ `partially-proven`, and
  * only then `proven`.
  */
-function resolveState(
+export function resolveState(
   commitState: DlmmCommitState,
   checks: readonly DlmmSwapCheck[],
   conflicts: readonly string[],

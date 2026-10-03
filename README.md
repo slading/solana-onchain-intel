@@ -245,7 +245,8 @@ DIAGNOSTICS
 
 ```bash
 npm test          # 106 with Milestone 1, 240 with Milestone 2, 374 with Milestone 3,
-                  # 468 with Milestone 4.1 (20 files) — no network, no mocking framework
+                  # 468 with Milestone 4.1 (20 files), 543 with Milestone 4.2 (24 files)
+                  # — no network, no mocking framework
 ```
 
 Four layers:
@@ -727,3 +728,116 @@ output against the same command run from the Milestone 3 commit.
   read, so a multi-leg transaction is reported as two pool swaps, not as one routed swap.
 - **A shared-mint leg.** If a pool's two mints were ever equal, the leg is `conflicting` by
   construction rather than "probably X to Y".
+
+## Milestone 4.2 — pump_amm `sell` recognition
+
+Milestone 4.1 recognized one instruction of one program. This milestone adds the second, and only
+the second: **was this a `sell` on the pump_amm program, and exactly what did it claim?** It is
+deliberately *not* a protocol framework — there is still no registry, no plugin list and no shared
+"AMM" abstraction; there is one extra recognizer and one extra line that calls it.
+
+### Scope: one program, one instruction
+
+- **Recognized:** `sell` (`33e685a4017f83ad`) of `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`
+  (`pump_amm`), per `pump-fun/pump-public-docs` → `idl/pump_amm.json`.
+- **Both call forms:** a direct top-level `sell` (primary fixture
+  `token-mixed-closeAccount`, at `[7]`) and a `sell` invoked under a Jupiter/router CPI (primary
+  fixture `v0-success-swap`, at `[3.0]`). The router's envelope is still never read for meaning.
+- **Not recognized, deliberately:** pump `buy`, every other pump_amm and pump_fees instruction,
+  Jupiter `route_v2` semantics, and any "a token went out and another came in, so it was a sell"
+  heuristic. A pump sell is never inferred from token deltas.
+
+### How a leg is proven
+
+A `PumpSellLeg` exists only when all of this holds; each step is one entry in the leg's `checks`
+array, which is fixed at 19 entries in a fixed order:
+
+| # | Condition | Required |
+| --- | --- | --- |
+| 1 | the instruction's program id is the pump_amm program | yes |
+| 2 | its first 8 bytes are the `sell` discriminator (re-derived from `sha256('global:sell')`) | yes |
+| 3 | its arguments parse with **exact** byte consumption — `base_amount_in: u64 @8`, `min_quote_amount_out: u64 @16`, 24 bytes, **no trailing byte** | yes |
+| 4 | the 21 named IDL roles are present in IDL order (the tail is counted, never assumed) | yes |
+| 5 | the instruction's CPI subtree is available (a CPI depth is known, inner instructions were recorded) | yes |
+| 6–7 | exactly one transfer out of the named user base account and one into the named user quote account, **inside that subtree** | yes |
+| 8–9 | those transfers' mints are the instruction's named `base_mint` and `quote_mint`, on opposite sides | yes |
+| 10–11 | the base transfer's counterparty is `pool_base_token_account`, and the quote transfer's source is `pool_quote_token_account` | yes |
+| 12 | the input transfer's amount equals the instruction's `base_amount_in` | yes |
+| 13 | `min_quote_amount_out` is stated (`> 0`) | no — informational |
+| 14 | the output is `>= min_quote_amount_out`, *if* one is stated | no |
+| 15 | the base transfer was authorized by the account's reported owner | no — informational |
+| 16 | the user's output is the transfer into the named user quote account, and every other outflow of the pool quote vault is listed separately by destination | yes |
+| 17–18 | both transfers appear in the Milestone 3 effects model at the same instruction reference, with the same endpoints, mint, amount, `amountSource: 'instruction-data'` and a committed state | yes |
+| 19 | the transaction itself succeeded | yes |
+
+**The user's proceeds are identified by named account slot, never by size.** Everything else the
+pool quote vault pays in the same subtree — protocol fee, coin-creator fee, and any further
+destination — is reported as a `PumpSellFeeTransfer` with role `protocol-fee-recipient`,
+`coin-creator-vault` or `other`, with its destination owner where that owner is itself evidenced
+(account metadata, or the very ATA-creation instruction that made the account). No such transfer
+is ever counted as the user's output, and no fee decomposition is claimed beyond listing them.
+
+**`min_quote_amount_out = 0` is not a pass.** Zero means the instruction states no floor; the
+renderer says so in those words (`no floor is stated by this instruction, so the output cannot be
+tested against one`), the leg records `min-quote-amount-out-not-stated` as an unknown, and no
+`min-quote-*` check is ever reported as passed. The routed fixture's leg is exactly that case; the
+direct fixture states a floor of `171510690`, which its output of `176602689` satisfies.
+
+**Commitment is inherited, never assumed.** A failed transaction is `not-committed` (a reverted
+`sell` is still *recognized*, never a committed sell); a missing effects model caps a leg at
+`partially-proven`; a missing CPI recording caps it at `partially-proven` too — the two transfer
+checks become `not-checkable` and the renderer warns that absent inner instructions are *not
+evidence that none happened*. Two disagreeing pieces of evidence make the leg `conflicting` and
+both values are printed.
+
+**Logs and events are supplemental only.** No pump event is parsed and none is required; the layer
+works with `logs: null`. Conversely `Program log: Instruction: Sell` is never sufficient — a vote
+transaction carrying that line verbatim produces **zero** legs.
+
+### Output
+
+`SWAPS` now covers both protocols and orders legs by execution order (top-level first, then inner
+groups). A pump leg prints the instruction reference, the authoritative instruction name `sell`,
+the pool, input amount/mint/token account/owner with its transfer leg, user output
+amount/mint/token account/owner with its transfer leg, the named roles actually used (with the
+counted tail), the excluded fee transfers, the floor line, the check tally and any unknowns. The
+section still never prints BUY or SELL: `sell` appears only as the authoritative instruction name.
+
+A report that names no protocols (the 4.1 `recognizeDlmmSwaps` API) keeps the exact 4.1 wording,
+so the 4.1 golden tests still pin the same bytes; the section's header and footer name the
+protocols only when the report says which ones were scanned.
+
+### Fixtures
+
+- `token-mixed-closeAccount.json` — the direct vector: a top-level pump_amm `sell` at `[7]`, with
+  185356 WSOL in (`[7.1]`) and 176602689 units out (`[7.2]`), plus the protocol-fee and other
+  quote-vault transfers it must not confuse with the output.
+- `v0-success-swap.json` — the routed vector: a pump_amm `sell` at `[3.0]` executed under the
+  router's CPI, with 2729270725642 units in (`[3.2]`) and 8747131976 WSOL out (`[3.3]`), a zero
+  floor, three excluded fee transfers, and the two DLMM `swap2` legs of Milestone 4.1 at `[3.8]`
+  and `[3.13]` unchanged.
+
+### Tests
+
+`tests/pump.sell.test.ts` (9), `tests/pump.fixtures.test.ts` (18),
+`tests/pump.adversarial.test.ts` (34), `tests/render.swaps.pump.test.ts` (14): the exact
+discriminator, exact byte consumption, IDL account order, both real legs (direct and routed),
+fee-transfer exclusion, amount mismatch, wrong vault/mint, missing CPI, duplicated candidate
+transfer, zero and non-zero `min_quote_amount_out`, a failed transaction, log independence,
+in-memory mutation vectors, purity/determinism, the golden section, and DLMM regression.
+`--no-swaps` is still verified byte-identical to the frozen Milestone 3 output, and every 4.1 DLMM
+leg block renders byte-for-byte as it did in 4.1.
+
+### Semantics still unknown (deliberately)
+
+- **Everything else on pump_amm.** `buy`, the fee-program instructions and the rest stay
+  unrecognized; only `sell` is matched.
+- **The account tail.** 2 accounts on a direct sell, 3 when routed via a router — counted and
+  reported as a number, never named or indexed. What a future program version puts there is
+  unknown, and an unexpected count never changes the proof.
+- **Fee provenance.** A destination is classified as protocol-fee or coin-creator only when it is
+  the instruction's named fee slot; anything else is `other`. No bps, no mint-side fee split, and
+  no total is claimed.
+- **The router's own intent.** A routed sell is reported as a pool sell plus the router's other
+  legs, never as one aggregated swap.
+- **Price, PnL and "was this a good trade".** Not computed, not approximated.

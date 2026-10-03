@@ -70,9 +70,36 @@ export {
   parseDlmmSwap2Args,
 } from './swap/dlmm.ts';
 export type { DlmmSwap2ArgParse, DlmmSwap2Args, DlmmSwap2Role } from './swap/dlmm.ts';
+export { recognizeSwaps } from './swap/recognize-swaps.ts';
+export type { RecognizeSwapsOptions } from './swap/recognize-swaps.ts';
+export {
+  PUMP_AMM_BUY_DISCRIMINATOR,
+  PUMP_AMM_PROGRAM_ID,
+  PUMP_AMM_SELL_ACCOUNT_ROLES,
+  PUMP_AMM_SELL_DISCRIMINATOR,
+  parsePumpSellArgs,
+} from './swap/pump.ts';
+export type { PumpSellArgParse, PumpSellArgs, PumpSellRole } from './swap/pump.ts';
+export { recognizePumpSells } from './swap/pump-recognize.ts';
+export type { PumpSellRecognition, RecognizePumpOptions } from './swap/pump-recognize.ts';
 export { renderSwapSection } from './render/swaps.ts';
 export type { SwapRenderOptions } from './render/swaps.ts';
 export type {
+  PumpFeeTransferRole,
+  PumpSellFeeTransfer,
+  PumpSellLeg,
+  PumpSellRoles,
+  SwapAmountEvidence,
+  SwapCheck,
+  SwapCheckOutcome,
+  SwapCommitState,
+  SwapDiagnostic,
+  SwapLeg,
+  SwapOwnerEvidence,
+  SwapProtocol,
+  SwapReport,
+  SwapSide,
+  SwapState,
   DlmmAmountEvidence,
   DlmmCheckOutcome,
   DlmmCommitState,

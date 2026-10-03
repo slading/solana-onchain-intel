@@ -11,7 +11,7 @@ import { assertIsSignature, isSolanaError } from '@solana/kit';
 import { byteSize } from '../lib/byte-size.ts';
 import { stringifyJson } from '../lib/format.ts';
 import { transactionEffects } from '../effects/build.ts';
-import { recognizeDlmmSwaps } from '../swap/recognize.ts';
+import { recognizeSwaps } from '../swap/recognize-swaps.ts';
 import { normalizeTransaction, NormalizationError } from '../normalize/transaction.ts';
 import { renderSummary } from '../render/summary.ts';
 import { createRpc, resolveCommitment, resolveRpcUrl } from '../rpc/client.ts';
@@ -57,10 +57,14 @@ Notes:
   flows are separated from amounts sized by exact balance reconciliation, anything
   unexplained is listed as unattributed, and a failed transaction contributes
   nothing but its fee.
-  SWAPS recognize Meteora DLMM swap2 instructions from the program's own semantics
-  (IDL discriminator, argument bytes, named account roles) plus the transfers it
-  executed; a token leaving and another arriving is never treated as a swap. A leg
-  is never called BUY or SELL, and a failed transaction yields no committed swap.
+  SWAPS recognize Meteora DLMM swap2 and pump_amm sell instructions from the
+  programs' own semantics (IDL discriminator, argument bytes, named account roles)
+  plus the transfers each executed inside its own CPI subtree; a token leaving and
+  another arriving is never treated as a swap. A pump sell's user output is the
+  transfer into its named user quote account — protocol-fee, coin-creator and other
+  fee transfers are reported separately and never counted as proceeds. A leg is
+  never labelled a buy or a sell beyond the instruction's own name, and a failed
+  transaction yields no committed swap.
 `.trim();
 
 interface Args {
@@ -277,7 +281,7 @@ async function main(): Promise<number> {
   // byte-identical single-section view, and the swap layer may never become a
   // second effects layer.
   const swaps =
-    args.noSwaps || args.effectsOnly ? null : recognizeDlmmSwaps(normalized, { effects });
+    args.noSwaps || args.effectsOnly ? null : recognizeSwaps(normalized, { effects });
 
   if (args.out !== null) {
     writeFileSync(

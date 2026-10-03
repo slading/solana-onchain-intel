@@ -15,7 +15,7 @@ import type {
   NormalizedTransactionVersion,
 } from '../model/transaction.ts';
 import type { TransactionEffects } from '../effects/model.ts';
-import type { TransactionSwaps } from '../swap/model.ts';
+import type { SwapReport } from '../swap/model.ts';
 
 /**
  * Renders the deterministic, human-readable summary.
@@ -58,11 +58,12 @@ export interface RenderOptions {
   /** Print only the EFFECTS section (the CLI's `--effects`). */
   readonly onlyEffects?: boolean;
   /**
-   * The Milestone 4.1 swap model to render. As with `effects`, the renderer never
-   * computes it itself, and the section appears exactly when a model is supplied —
-   * so `--no-swaps` reproduces the previous output byte-for-byte.
+   * The swap model to render: the 4.1 DLMM-only model, or the aggregate report of
+   * Milestones 4.1 + 4.2. As with `effects`, the renderer never computes it itself,
+   * and the section appears exactly when a model is supplied — so `--no-swaps`
+   * reproduces the previous output byte-for-byte.
    */
-  readonly swaps?: TransactionSwaps | null;
+  readonly swaps?: SwapReport | null;
   /** Print only the SWAPS section (the CLI's `--swaps`). */
   readonly onlySwaps?: boolean;
 }

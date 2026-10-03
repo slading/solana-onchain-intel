@@ -178,6 +178,135 @@ export interface DlmmSwapDiagnostic {
   readonly ref: InstructionRef | null;
 }
 
+/* ------------------------------------------- the aggregate over all protocols */
+
+/**
+ * The protocols the swap layer can recognize.
+ *
+ * 4.1 added `meteora-dlmm` (`swap2`); 4.2 adds `pump-amm` (`sell`). The list is an
+ * enumeration of implemented targets, not a registry: nothing generic dispatches
+ * on it, and adding a protocol means adding recognition code and tests for it.
+ */
+export type SwapProtocol = 'meteora-dlmm' | 'pump-amm';
+
+/**
+ * The shared vocabulary of a leg. These aliases exist so the pump model can reuse
+ * the 4.1 types *by identity* instead of redeclaring them — renaming a frozen type
+ * for symmetry would be a refactor with no behavioural gain.
+ */
+export type SwapState = DlmmSwapState;
+export type SwapCommitState = DlmmCommitState;
+export type SwapCheckOutcome = DlmmCheckOutcome;
+export type SwapCheck = DlmmSwapCheck;
+export type SwapSide = DlmmSwapSide;
+export type SwapOwnerEvidence = DlmmOwnerEvidence;
+export type SwapAmountEvidence = DlmmAmountEvidence;
+export type SwapDiagnostic = DlmmSwapDiagnostic;
+
+/** Any recognized AMM leg (M4.1 DLMM or M4.2 pump). Discriminated by `protocol`. */
+export type SwapLeg = DlmmSwapLeg | PumpSellLeg;
+
+/**
+ * Everything the swap layer concluded about one transaction, across protocols.
+ *
+ * `scannedProtocols` names the protocols the scan that produced this report
+ * **covers** — not the legs it happened to find. It is optional **on purpose**:
+ * the 4.1 `TransactionSwaps` (returned by `recognizeDlmmSwaps`, which does not
+ * carry it) stays assignable, and its absence means "the 4.1 scan, i.e. Meteora
+ * DLMM only" to every consumer, including the renderer's section wording.
+ */
+export interface SwapReport {
+  readonly scannedProtocols?: readonly SwapProtocol[];
+  readonly legs: readonly SwapLeg[];
+  readonly diagnostics: readonly SwapDiagnostic[];
+  readonly counts: DlmmSwapCounts;
+}
+
+/* ------------------------------------------------------------- pump_amm sell */
+
+/**
+ * The named account roles of `sell` this layer relies on for proof, in the IDL's
+ * names. Slots that are not needed for the claim (programs, system accounts,
+ * `fee_config`, `fee_program`) are deliberately absent — except the two fee
+ * destinations, which are named *only* so a fee transfer can be identified as
+ * something other than the user's output.
+ */
+export interface PumpSellRoles {
+  /** `pool`: the pump AMM pool the sell executed against. */
+  readonly pool: string | null;
+  /** `user`: the account the instruction declares as the seller. */
+  readonly user: string | null;
+  readonly globalConfig: string | null;
+  readonly baseMint: string | null;
+  readonly quoteMint: string | null;
+  readonly userBaseTokenAccount: string | null;
+  readonly userQuoteTokenAccount: string | null;
+  readonly poolBaseTokenAccount: string | null;
+  readonly poolQuoteTokenAccount: string | null;
+  /** `protocol_fee_recipient_token_account`: a named destination, never the user's. */
+  readonly protocolFeeRecipientTokenAccount: string | null;
+  /** `coin_creator_vault_ata`: a named destination, never the user's. */
+  readonly coinCreatorVaultAta: string | null;
+  /** Accounts beyond the 21 named roles. Counted, never named, never used. */
+  readonly tailAccountCount: number;
+}
+
+/** Where a quote-vault transfer went, on the evidence available. */
+export type PumpFeeTransferRole =
+  /** The destination is the IDL's `protocol_fee_recipient_token_account`. */
+  | 'protocol-fee-recipient'
+  /** The destination is the IDL's `coin_creator_vault_ata`. */
+  | 'coin-creator-vault'
+  /** Not one of the named fee slots: something else the pool paid. */
+  | 'other';
+
+/**
+ * A quote-vault transfer that is **not** the user's output.
+ *
+ * These are reported as evidence, never as a claim about intent: the layer says
+ * where the units went and which named slot (if any) that destination is. It does
+ * not decompose the pool's fee structure, and the amounts are never summed into
+ * anything.
+ */
+export interface PumpSellFeeTransfer {
+  /** The transfer instruction itself. */
+  readonly ref: InstructionRef;
+  readonly destTokenAccount: string | null;
+  readonly destOwner: string | null;
+  readonly destOwnerEvidence: SwapOwnerEvidence;
+  readonly amount: bigint | null;
+  readonly mint: string | null;
+  readonly role: PumpFeeTransferRole;
+}
+
+/** One recognized pump_amm `sell`, with everything it was proven from. */
+export interface PumpSellLeg {
+  readonly protocol: 'pump-amm';
+  readonly programId: string;
+  readonly instructionName: 'sell';
+  readonly ref: InstructionRef;
+  readonly commitState: SwapCommitState;
+  readonly state: SwapState;
+  /** The base leg: the user's base account paying the pool's base vault. */
+  readonly input: SwapSide;
+  /** The quote leg: the pool's quote vault paying the user's quote account. */
+  readonly output: SwapSide;
+  /** The instruction's `base_amount_in` argument, verbatim. */
+  readonly baseAmountIn: bigint | null;
+  /** The instruction's `min_quote_amount_out` argument, verbatim (`0` = no floor). */
+  readonly minQuoteAmountOut: bigint | null;
+  readonly roles: PumpSellRoles;
+  /** Every quote-vault transfer that is not the user's output, in execution order. */
+  readonly feeTransfers: readonly PumpSellFeeTransfer[];
+  /** Every condition that was evaluated, in a fixed order. */
+  readonly checks: readonly SwapCheck[];
+  /** Ids of the checks that failed. Non-empty ⇒ `state === 'conflicting'`. */
+  readonly conflicts: readonly string[];
+  /** Machine ids for things that could not be established at all. */
+  readonly unknowns: readonly string[];
+  readonly diagnostics: readonly SwapDiagnostic[];
+}
+
 export interface DlmmSwapCounts {
   readonly recognized: number;
   readonly proven: number;
