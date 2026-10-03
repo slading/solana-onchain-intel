@@ -1,5 +1,6 @@
 import { renderActionSection } from './actions.ts';
 import { renderEffectsSection } from './effects.ts';
+import { renderSwapSection } from './swaps.ts';
 import {
   formatLamportsWithSol,
   formatSigned,
@@ -14,6 +15,7 @@ import type {
   NormalizedTransactionVersion,
 } from '../model/transaction.ts';
 import type { TransactionEffects } from '../effects/model.ts';
+import type { TransactionSwaps } from '../swap/model.ts';
 
 /**
  * Renders the deterministic, human-readable summary.
@@ -25,6 +27,10 @@ import type { TransactionEffects } from '../effects/model.ts';
  *
  * Long lists are elided for readability only (`MAX_LISTED_ADDRESSES`); the full
  * values are always available via `--json`.
+ *
+ * Sections appear in a fixed order: header, INSTRUCTIONS, ACTIONS, SWAPS,
+ * EFFECTS, SOL BALANCE CHANGES, TOKEN BALANCE CHANGES, LOGS, DIAGNOSTICS. SWAPS
+ * (Milestone 4.1) is present only when a swap model is supplied.
  */
 const MAX_LISTED_ADDRESSES = 4;
 const LABEL_WIDTH = 13;
@@ -51,6 +57,14 @@ export interface RenderOptions {
   readonly effects?: TransactionEffects | null;
   /** Print only the EFFECTS section (the CLI's `--effects`). */
   readonly onlyEffects?: boolean;
+  /**
+   * The Milestone 4.1 swap model to render. As with `effects`, the renderer never
+   * computes it itself, and the section appears exactly when a model is supplied —
+   * so `--no-swaps` reproduces the previous output byte-for-byte.
+   */
+  readonly swaps?: TransactionSwaps | null;
+  /** Print only the SWAPS section (the CLI's `--swaps`). */
+  readonly onlySwaps?: boolean;
 }
 
 function field(label: string, value: string): string {
@@ -124,6 +138,21 @@ export function renderSummary(
     lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
     lines.push('');
     lines.push(...renderActionSection(transaction.decoded, { abbreviateAddresses: options.fullAddresses !== true }));
+    return lines.join('\n');
+  }
+
+  if (options.onlySwaps === true) {
+    lines.push('');
+    lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
+    if (options.swaps !== undefined && options.swaps !== null) {
+      lines.push('');
+      lines.push(
+        ...renderSwapSection(options.swaps, { abbreviateAddresses: options.fullAddresses !== true }),
+      );
+    } else {
+      lines.push('');
+      lines.push('SWAPS (not computed)');
+    }
     return lines.join('\n');
   }
 
@@ -244,6 +273,16 @@ export function renderSummary(
     lines.push('');
     lines.push(
       ...renderActionSection(transaction.decoded, {
+        abbreviateAddresses: options.fullAddresses !== true,
+      }),
+    );
+  }
+
+  // -------------------------------------------------------------------- swaps
+  if (options.swaps !== undefined && options.swaps !== null) {
+    lines.push('');
+    lines.push(
+      ...renderSwapSection(options.swaps, {
         abbreviateAddresses: options.fullAddresses !== true,
       }),
     );

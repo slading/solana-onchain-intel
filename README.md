@@ -67,8 +67,10 @@ TOKEN BALANCE CHANGES
       delta  -4774791332475 raw units (pre and post reported)
 ```
 
-*(Sample above is the Milestone 1 output shape. The CLI now also prints an `ACTIONS`
-section by default — reproduce this exact output with `--no-actions`; see “Milestone 2” below.)*
+*(Sample above is the Milestone 1 output shape. The CLI now also prints `ACTIONS` and `SWAPS`
+sections by default — reproduce the Milestone 1 output with `--no-actions --no-swaps`, the
+Milestone 3 output with `--no-swaps`; see “Milestone 2”, “Milestone 3” and “Milestone 4.1”
+below.)*
 
 ### Options
 
@@ -83,8 +85,10 @@ section by default — reproduce this exact output with `--no-actions`; see “M
 | `--no-actions` | Omit `ACTIONS`, leaving the Milestone 1 output shape |
 | `--effects` | Print only the `EFFECTS` section (value movement + net change) |
 | `--no-effects` | Omit `EFFECTS` from the text summary |
-| `--full-addresses` | Print full base58 addresses in `ACTIONS`/`EFFECTS` instead of `4…4` abbreviations |
-| `--out <file>` | Also write `{ normalized, effects, raw }` JSON to a file |
+| `--swaps` | Print only the `SWAPS` section (recognized AMM swaps) |
+| `--no-swaps` | Omit `SWAPS`, leaving the Milestone 3 output shape byte-for-byte |
+| `--full-addresses` | Print full base58 addresses in `ACTIONS`/`EFFECTS`/`SWAPS` instead of `4…4` abbreviations |
+| `--out <file>` | Also write `{ normalized, effects, swaps, raw }` JSON to a file |
 | `-h`, `--help` | Usage |
 
 ### Exit codes
@@ -240,8 +244,8 @@ DIAGNOSTICS
 ## Tests
 
 ```bash
-npm test          # 106 tests in Milestone 1, 240 with Milestone 2, 374 with Milestone 3
-                  # no network, no mocking framework
+npm test          # 106 with Milestone 1, 240 with Milestone 2, 374 with Milestone 3,
+                  # 468 with Milestone 4.1 (20 files) — no network, no mocking framework
 ```
 
 Four layers:
@@ -259,7 +263,11 @@ Four layers:
 - **`tests/render.test.ts`** — a frozen golden summary, plus checks that output is
   byte-identical across runs and free of ANSI escapes.
 
-The files added by Milestone 2 and Milestone 3 are described in their sections below.
+The files added by Milestone 2, Milestone 3 and Milestone 4.1 are described in their sections
+below. `tests/helpers/fixtures.ts` drives the fixture-wide suites from `fixtures/*.json`; adding a
+seventh fixture (Milestone 4.1) therefore extends `decode.transaction`, `effects.fixtures`,
+`normalize.kit-transformed` and `normalize.real-fixtures` at once, and it has to satisfy every
+invariant those suites check — it does.
 
 Fixtures (`fixtures/*.json`) are `{ provenance, request, response }` where `response` is the
 untouched `result`. Re-harvest with `npm run harvest:fixtures -- --search` (network; the
@@ -612,3 +620,110 @@ hypothetical shape the production path does not produce.
 4. **An indexer-free multi-transaction view.** The effects model is per-transaction and pure;
    the next useful question ("what did this account do today") needs a caller that can run it
    over many signatures — not a database.
+
+---
+
+## Milestone 4.1 — Meteora DLMM `swap2` recognition
+
+Milestones 1–3 answer *what moved*. This milestone answers one narrow question about *intent*,
+and only where a program's own instruction semantics prove it: **was this a Meteora DLMM
+`swap2`, and exactly what did it claim?** The Milestone 3 section above ends with “no swap
+recognition, no PnL, no price, no ‘this was a buy’”. This milestone adds exactly one exception —
+a recognized Meteora DLMM `swap2` — and nothing else on that list.
+
+### Scope: one program, one instruction
+
+- **Recognized:** `swap2` (`414b3f4ceb5b5b88`) of `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo`
+  (`lb_clmm`), per `MeteoraAg/dlmm-sdk` → `idls/dlmm.json`.
+- **Not recognized, deliberately:** DLMM's own `swap` (v1), every other DLMM instruction, pump_amm,
+  Jupiter's `route_v2` (the router envelope is *never* read for meaning — a leg is recognized from
+  the pool's instruction alone), and any "this token went out and that one came in, so it was a
+  swap" heuristic. There is no AMM registry.
+
+### How a leg is proven
+
+A `DlmmSwapLeg` exists only when all of this holds; each step is one entry in the leg's `checks`
+array, which is fixed at 19 entries in a fixed order:
+
+| # | Condition | Required |
+| --- | --- | --- |
+| 1 | the instruction's program id is the DLMM program | yes |
+| 2 | its first 8 bytes are the `swap2` discriminator | yes |
+| 3 | its arguments parse with **exact** byte consumption — no truncated `u64`, no unread slice, **no trailing byte** | yes |
+| 4 | at least the 16 named IDL roles are present (the tail is counted, never assumed) | yes |
+| 5 | the instruction's CPI subtree is available (a CPI depth is known, inner instructions were recorded) | yes |
+| 6–7 | exactly one token transfer out of `user_token_in` and one into `user_token_out` **inside that subtree** | yes |
+| 8–9 | those transfers' mints are the pool's two named mints, on opposite sides | yes |
+| 10 | the direction follows from the mints (`token_x_mint` in ⇒ `swap_for_y`) | yes |
+| 11–12 | the vaults agree with the direction: an X-in leg pays into `reserve_x` and is paid out of `reserve_y` | yes |
+| 13 | the input transfer's amount equals the instruction's `amount_in` | yes |
+| 14 | `min_amount_out` is stated (`> 0`) | no — informational |
+| 15 | the output is `>= min_amount_out`, *if* one is stated | no |
+| 16 | the input transfer was authorized by the account's reported owner | no — informational |
+| 17–18 | both transfers appear in the Milestone 3 effects model **at the same instruction reference**, with the same endpoints, mint, amount, `amountSource: 'instruction-data'` and a committed state | yes |
+| 19 | the transaction itself succeeded | yes |
+
+Arguments may only be read one way: `amount_in: u64 @8`, `min_amount_out: u64 @16`, then
+`RemainingAccountsInfo { slices: Vec<RemainingAccountsSlice { accounts_type: u8, length: u8 }> }`.
+A payload with any byte left over is *not* a `swap2` this layer understands, and is reported as
+unrecognized rather than partially read — a future program version degrades to silence, never to a
+wrong amount.
+
+**`min_amount_out = 0` is not a pass.** Zero means the instruction states no floor; the renderer
+says so in those words, the leg records `min-amount-out-not-stated` as an unknown, and no
+`min-amount-*` check is ever reported as passed. `v0-success-swap` has zero floors on both legs;
+`v0-success-dlmm-minout` has a real floor of `1`, which the output satisfies.
+
+**Commitment is inherited, never assumed.** A failed transaction is reported as
+`not-committed` (amounts labelled as attempted movement); a missing effects model caps a leg at
+`partially-proven`; two disagreeing pieces of evidence make it `conflicting` and both values are
+printed. Nothing is averaged and nothing is guessed.
+
+**Events and logs are supplemental only.** The Anchor `Swap`/`Swap2Evt` events are not parsed and
+not required; the layer works with `logs: null`. Conversely, `Program log: Instruction: Swap2` is
+never sufficient — and when the node did not record CPI instructions at all, the layer says
+`swap-inner-instructions-unavailable` instead of reporting "no swap".
+
+### Output
+
+The `SWAPS` section is deterministic, prints the semantic result first, and names the evidence
+(the instruction reference, both token accounts with owners, the pool vaults and mints, the two
+transfer legs, the raw argument values) and every condition that did not pass. It never prints
+BUY or SELL: whether a swap is a "buy" depends on which asset the reader treats as the quote
+asset, which is not a fact this layer has.
+
+### Fixtures
+
+- `v0-success-swap.json` — the primary vector: a Jupiter `route_v2` routing through **two**
+  Meteora DLMM pools. Both `swap2` legs are recognized independently and exactly (`[3.8]` and
+  `[3.13]`), and both reconcile with the effects model.
+- `v0-success-dlmm-minout.json` — captured for this milestone because every `swap2` in the
+  primary fixture states a zero floor: a direct pool swap with `min_amount_out = 1`. It was
+  harvested with `npm run harvest:fixtures -- --signature …` from the same public endpoint.
+
+### Tests
+
+`tests/swap.dlmm.test.ts` (10), `tests/swap.fixtures.test.ts` (17),
+`tests/swap.adversarial.test.ts` (31), `tests/render.swaps.test.ts` (15): the discriminator
+(re-derived from `sha256('global:swap2')`, not copied from an observation), exact byte
+consumption, IDL role order, both real legs, transfer-by-transfer reconciliation with the effects
+model, `min_amount_out` semantics, CPI-subtree attribution (including a sibling transfer that must
+*not* be attributed), log/event independence, misleading logs, a failed transaction, mutation
+vectors (tampered `amount_in`, violated floor, wrong vault, swapped mints, missing and duplicated
+transfers, unrecorded CPIs), purity/determinism, and the golden section. `--no-swaps` is verified
+byte-identical to the frozen Milestone 3 output — by the test above and by diffing the CLI's own
+output against the same command run from the Milestone 3 commit.
+
+### Semantics still unknown (deliberately)
+
+- **Everything outside DLMM `swap2`.** pump_amm, DLMM `swap`, Jupiter `route_v2` and the rest stay
+  unrecognized; the discovery report (`m4-swap-recognition-discovery.md`) is the groundwork.
+- **What the BinArray tail is.** Counted, never interpreted, never needed for the proof.
+- **Token-2022 transfer-hook slices.** The `RemainingAccountsInfo` slice count is recorded; the
+  slices are not interpreted, and hook accounts are not differentiated from bin arrays.
+- **Fees.** The DLMM `Swap`/`Swap2Evt` events would give fee decomposition; nothing here parses
+  them, so no fee is claimed.
+- **The router's own intent.** The route envelope's splits, fee bps and quoted amount are not
+  read, so a multi-leg transaction is reported as two pool swaps, not as one routed swap.
+- **A shared-mint leg.** If a pool's two mints were ever equal, the leg is `conflicting` by
+  construction rather than "probably X to Y".

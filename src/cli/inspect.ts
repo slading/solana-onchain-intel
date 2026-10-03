@@ -11,6 +11,7 @@ import { assertIsSignature, isSolanaError } from '@solana/kit';
 import { byteSize } from '../lib/byte-size.ts';
 import { stringifyJson } from '../lib/format.ts';
 import { transactionEffects } from '../effects/build.ts';
+import { recognizeDlmmSwaps } from '../swap/recognize.ts';
 import { normalizeTransaction, NormalizationError } from '../normalize/transaction.ts';
 import { renderSummary } from '../render/summary.ts';
 import { createRpc, resolveCommitment, resolveRpcUrl } from '../rpc/client.ts';
@@ -34,11 +35,13 @@ Options:
   --raw                Print only the raw getTransaction result as JSON
   --actions            Print only the ACTIONS section (decoded semantics)
   --effects            Print only the EFFECTS section (value movement + net change)
+  --swaps              Print only the SWAPS section (recognized AMM swaps)
   --full-addresses     Print exact addresses in ACTIONS/EFFECTS instead of abbreviated
   --no-actions         Omit the ACTIONS section from the text summary
   --no-effects         Omit the EFFECTS section from the text summary
+  --no-swaps           Omit the SWAPS section from the text summary
   --no-logs            Omit program logs from the text summary
-  --out <file>         Also write { normalized, effects, raw } JSON to <file>
+  --out <file>         Also write { normalized, effects, swaps, raw } JSON to <file>
   -h, --help           Show this help
 
 Exit codes:
@@ -54,6 +57,10 @@ Notes:
   flows are separated from amounts sized by exact balance reconciliation, anything
   unexplained is listed as unattributed, and a failed transaction contributes
   nothing but its fee.
+  SWAPS recognize Meteora DLMM swap2 instructions from the program's own semantics
+  (IDL discriminator, argument bytes, named account roles) plus the transfers it
+  executed; a token leaving and another arriving is never treated as a swap. A leg
+  is never called BUY or SELL, and a failed transaction yields no committed swap.
 `.trim();
 
 interface Args {
@@ -67,6 +74,8 @@ interface Args {
   noActions: boolean;
   effectsOnly: boolean;
   noEffects: boolean;
+  swapsOnly: boolean;
+  noSwaps: boolean;
   fullAddresses: boolean;
   out: string | null;
   help: boolean;
@@ -84,6 +93,8 @@ function parseArgs(argv: readonly string[]): Args {
     noActions: false,
     effectsOnly: false,
     noEffects: false,
+    swapsOnly: false,
+    noSwaps: false,
     fullAddresses: false,
     out: null,
     help: false,
@@ -121,6 +132,12 @@ function parseArgs(argv: readonly string[]): Args {
         break;
       case '--no-effects':
         args.noEffects = true;
+        break;
+      case '--swaps':
+        args.swapsOnly = true;
+        break;
+      case '--no-swaps':
+        args.noSwaps = true;
         break;
       case '--full-addresses':
         args.fullAddresses = true;
@@ -255,20 +272,33 @@ async function main(): Promise<number> {
   // is computed once and shared by the JSON dumps and the text summary.
   const effects = args.noEffects ? null : transactionEffects(normalized);
 
+  // The swap layer reads the canonical model plus (optionally) the effects model.
+  // `--no-swaps` and `--effects` skip it entirely: `--effects` must stay a
+  // byte-identical single-section view, and the swap layer may never become a
+  // second effects layer.
+  const swaps =
+    args.noSwaps || args.effectsOnly ? null : recognizeDlmmSwaps(normalized, { effects });
+
   if (args.out !== null) {
     writeFileSync(
       args.out,
       `${stringifyJson({
         normalized: stripRaw(normalized),
         effects,
+        swaps,
         raw: fetched.raw,
       })}\n`,
     );
-    console.error(`Wrote normalized + effects + raw JSON to ${args.out}`);
+    console.error(`Wrote normalized + effects + swaps + raw JSON to ${args.out}`);
   }
 
   if (args.json) {
-    console.log(stringifyJson(effects === null ? normalized : { ...normalized, ...{ effects } }));
+    const payload = {
+      ...normalized,
+      ...(effects === null ? {} : { effects }),
+      ...(swaps === null ? {} : { swaps }),
+    };
+    console.log(stringifyJson(effects === null && swaps === null ? normalized : payload));
     return EXIT_OK;
   }
 
@@ -278,7 +308,9 @@ async function main(): Promise<number> {
       includeActions: !args.noActions,
       onlyActions: args.actionsOnly,
       onlyEffects: args.effectsOnly,
+      onlySwaps: args.swapsOnly,
       effects,
+      swaps,
       fullAddresses: args.fullAddresses,
     }),
   );
