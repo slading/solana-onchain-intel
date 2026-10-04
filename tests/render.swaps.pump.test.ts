@@ -1,5 +1,5 @@
 /**
- * The SWAPS section now that it covers two protocols.
+ * The SWAPS section now that it covers two protocols and both pump_amm directions.
  *
  * Three things are asserted here and nowhere else:
  *
@@ -8,7 +8,8 @@
  *   2. that the two Milestone 4.1 DLMM leg blocks are rendered **byte-identically**
  *      to what the DLMM-only renderer produced — the pump addition is additive;
  *   3. that nothing is labelled a buy or a sell beyond the authoritative
- *      instruction name.
+ *      instruction name (`pump_amm buy/sell` is the section naming the two
+ *      instructions it covers, and `pump_amm buy` / `pump_amm sell` are those names).
  */
 import { describe, expect, it } from 'vitest';
 import { transactionEffects } from '../src/effects/build.ts';
@@ -22,7 +23,7 @@ import { pumpFixture } from './helpers/pump.ts';
 
 /** The section for the direct fixture, abbreviated, exactly as rendered. */
 const GOLDEN_DIRECT = [
-  'SWAPS (Meteora DLMM swap2 + pump_amm sell — recognized from instruction semantics, cross-checked against EFFECTS)',
+  'SWAPS (Meteora DLMM swap2 + pump_amm buy/sell — recognized from instruction semantics, cross-checked against EFFECTS)',
   '  1 recognized • 1 proven • 0 partially proven • 0 not committed • 0 conflicting',
   '',
   '  [7]  sell  pool 5wYc…rTdV  base → quote  committed  proven',
@@ -33,7 +34,7 @@ const GOLDEN_DIRECT = [
   '      min out  171510690 — the instruction states a floor; the output 176602689 satisfies it',
   '      checks  19 pass • 0 fail • 0 not-checkable',
   '',
-  '  a leg appears here only because an AMM instruction was matched by program id and discriminator, its arguments were read with exact byte consumption, its named account roles mapped, and the transfers it executed inside its own CPI subtree agree with those roles — a token leaving and another arriving is never sufficient. In a pump_amm sell, the output is the transfer into the named user quote account; transfers to protocol-fee, coin-creator and other destinations are listed separately and are never counted as the user’s proceeds.',
+  '  a leg appears here only because an AMM instruction was matched by program id and discriminator, its arguments were read with exact byte consumption, its named account roles mapped, and the transfers it executed inside its own CPI subtree agree with those roles — a token leaving and another arriving is never sufficient. In a pump_amm sell, the output is the transfer into the named user quote account; transfers to protocol-fee, coin-creator and other destinations are listed separately and are never counted as the user’s proceeds. In a pump_amm buy, the payment is every outflow of the named user quote account inside the instruction — the transfer into the pool quote vault and the fee transfers listed with it — and the instruction’s max_quote_amount_in bounds that total.',
 ];
 
 describe('the pump leg as rendered', () => {
@@ -73,11 +74,19 @@ describe('the pump leg as rendered', () => {
       const { report } = pumpFixture(name);
       const text = renderSwapSection(report, { abbreviateAddresses: false }).join('\n');
       expect(text, name).toContain('sell');
-      expect(text, name).not.toMatch(/\b(buy|bought|sold|BUY|SELL|Buy|Sell)\b/);
+      // The only places those words may appear are the two instruction names and the
+      // section's own `pump_amm buy/sell`; nothing else may call anything a buy/sell.
+      const namesStripped = text.replace(/pump_amm buy\/sell/g, '').replace(/pump_amm (sell|buy)/g, '');
+      expect(namesStripped, name).not.toMatch(/\b(buy|bought|sold|BUY|SELL|Buy|Sell)\b/);
       // Every occurrence of "sell" is the instruction's own name: either the
       // program's `pump_amm sell` or the leg header's `  sell  ` column.
-      const stripped = text.replace(/pump_amm sell/g, '').replace(/  sell  /g, '');
+      const stripped = text
+        .replace(/pump_amm buy\/sell/g, '')
+        .replace(/pump_amm sell/g, '')
+        .replace(/pump_amm buy/g, '')
+        .replace(/  sell  /g, '');
       expect(stripped, name).not.toContain('sell');
+      expect(stripped, name).not.toContain('buy');
       expect(text.match(/pump_amm sell/g)?.length ?? 0).toBeGreaterThan(0);
       expect(text, name).toContain('base → quote');
     }

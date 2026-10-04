@@ -14,7 +14,7 @@
 
 import { refLabel } from '../decode/actions.ts';
 import { abbreviateAddress } from './actions.ts';
-import type { SwapCheck, SwapLeg, SwapProtocol, SwapReport } from '../swap/model.ts';
+import type { PumpBuyLeg, SwapCheck, SwapLeg, SwapProtocol, SwapReport } from '../swap/model.ts';
 
 const MAX_LISTED_CHECKS = 3;
 
@@ -33,10 +33,10 @@ export interface SwapRenderOptions {
 function wording(protocols: readonly SwapProtocol[] | undefined) {
   const dlmm = protocols === undefined || protocols.includes('meteora-dlmm');
   const pump = protocols !== undefined && protocols.includes('pump-amm');
-  const named = [dlmm ? 'Meteora DLMM swap2' : null, pump ? 'pump_amm sell' : null]
+  const named = [dlmm ? 'Meteora DLMM swap2' : null, pump ? 'pump_amm buy/sell' : null]
     .filter((entry): entry is string => entry !== null)
     .join(' + ');
-  const long = [dlmm ? 'Meteora DLMM swap2' : null, pump ? 'pump_amm sell' : null]
+  const long = [dlmm ? 'Meteora DLMM swap2' : null, pump ? 'pump_amm buy/sell' : null]
     .filter((entry): entry is string => entry !== null)
     .join(' or ');
   return {
@@ -52,7 +52,10 @@ function wording(protocols: readonly SwapProtocol[] | undefined) {
         (pump
           ? ' In a pump_amm sell, the output is the transfer into the named user quote account; transfers to ' +
             'protocol-fee, coin-creator and other destinations are listed separately and are never counted as ' +
-            'the user\u2019s proceeds.'
+            'the user\u2019s proceeds.' +
+            ' In a pump_amm buy, the payment is every outflow of the named user quote account inside the ' +
+            'instruction — the transfer into the pool quote vault and the fee transfers listed with it — and ' +
+            'the instruction\u2019s max_quote_amount_in bounds that total.'
           : ''),
   };
 }
@@ -72,6 +75,57 @@ function stateLabel(leg: SwapLeg): string {
 
 function amount(value: bigint | null): string {
   return value === null ? 'not observable' : `${value} raw units`;
+}
+
+/** The value `max_quote_amount_in` uses to say "no binding limit stated". */
+const U64_MAX = 18_446_744_073_709_551_615n;
+
+/**
+ * The `max_quote_amount_in` line for a pump `buy`.
+ *
+ * A cap is only ever reported as satisfied when the spend is attributed *and* its
+ * enumeration is complete; `u64::MAX` is stated as the absence of a bound rather
+ * than rendered as a trivially satisfied one.
+ */
+function capLine(leg: PumpBuyLeg): string {
+  const cap = leg.maxQuoteAmountIn;
+  if (cap === null) {
+    return "      cap  max_quote_amount_in unknown — the instruction's bound could not be read";
+  }
+  const spend = leg.quoteSpend;
+  const vault = leg.input.amount;
+  const fees = spend === null || vault === null ? null : spend - vault;
+  if (cap === U64_MAX) {
+    return (
+      `      cap  max_quote_amount_in ${cap} — the maximum u64: the instruction states no binding limit, so the ` +
+      `spend ${spend === null ? 'could not be compared against one' : `of ${spend} is not tested against it`} ` +
+      '(never reported as a satisfied cap)'
+    );
+  }
+  if (leg.commitState !== 'committed') {
+    return (
+      `      cap  max_quote_amount_in ${cap} — stated, but the transaction did not commit, so the bound describes ` +
+      'attempted movement only (never reported as satisfied)'
+    );
+  }
+  if (spend === null) {
+    return (
+      `      cap  max_quote_amount_in ${cap} — stated, but the user's spend could not be attributed, so the bound ` +
+      'cannot be tested (never reported as satisfied)'
+    );
+  }
+  if (!leg.quoteSpendComplete) {
+    return (
+      `      cap  max_quote_amount_in ${cap} — stated, but the spend enumeration is incomplete (${spend} attributed), ` +
+      'so the bound cannot be tested against it (never reported as satisfied)'
+    );
+  }
+  const breakdown =
+    fees === null ? 'the whole spend' : `${vault} into the pool quote vault + ${fees} in ${leg.feeTransfers.length} other outflow(s)`;
+  return (
+    `      cap  max_quote_amount_in ${cap} — an upper bound on the user's total quote spend; the spend ${spend} ` +
+    `(${breakdown}) ${spend <= cap ? 'satisfies it' : 'exceeds it'}`
+  );
 }
 
 function summarizeChecks(checks: readonly SwapCheck[]): string {
@@ -116,10 +170,16 @@ export function renderSwapSection(
         `  ${refLabel(leg.ref)}  ${leg.instructionName}  pool ${show(leg.roles.pool)}  ${direction}  ` +
           `${leg.commitState}  ${stateLabel(leg)}`,
       );
-    } else {
+    } else if (leg.instructionName === 'sell') {
       // The instruction's own name states the direction: base in, quote out.
       lines.push(
         `  ${refLabel(leg.ref)}  ${leg.instructionName}  pool ${show(leg.roles.pool)}  base → quote  ` +
+          `${leg.commitState}  ${stateLabel(leg)}`,
+      );
+    } else {
+      // `buy`: quote in, base out — again the instruction's own name, mirrored.
+      lines.push(
+        `  ${refLabel(leg.ref)}  ${leg.instructionName}  pool ${show(leg.roles.pool)}  quote → base  ` +
           `${leg.commitState}  ${stateLabel(leg)}`,
       );
     }
@@ -155,7 +215,7 @@ export function renderSwapSection(
           : `      min out  ${leg.minAmountOut ?? 'unknown'} — no floor is stated by this instruction, so the output cannot be ` +
               'tested against one (never reported as a satisfied floor)',
       );
-    } else {
+    } else if (leg.instructionName === 'sell') {
       lines.push(
         `      roles  global_config ${show(leg.roles.globalConfig)}  pool_base ${show(leg.roles.poolBaseTokenAccount)}  ` +
           `pool_quote ${show(leg.roles.poolQuoteTokenAccount)}  base_mint ${show(leg.roles.baseMint)}  ` +
@@ -180,6 +240,29 @@ export function renderSwapSection(
           : `      min out  ${leg.minQuoteAmountOut ?? 'unknown'} — no floor is stated by this instruction, so the output cannot be ` +
               'tested against one (never reported as a satisfied floor)',
       );
+    }
+
+    if (leg.protocol === 'pump-amm' && leg.instructionName === 'buy') {
+      lines.push(
+        `      roles  global_config ${show(leg.roles.globalConfig)}  pool_base ${show(leg.roles.poolBaseTokenAccount)}  ` +
+          `pool_quote ${show(leg.roles.poolQuoteTokenAccount)}  base_mint ${show(leg.roles.baseMint)}  ` +
+          `quote_mint ${show(leg.roles.quoteMint)}  remaining ${leg.roles.tailAccountCount}`,
+      );
+      lines.push(
+        leg.feeTransfers.length === 0
+          ? leg.input.legRef === null
+            ? "      fees   no transfer out of the user's quote account was attributed, so there is nothing to list"
+            : "      fees   no other transfer left the user's quote account inside this instruction, so the payment is the whole spend"
+          : `      fees   ${leg.feeTransfers.length} other outflow(s) of the user's quote account, counted in the spend: ` +
+              leg.feeTransfers
+                .map(
+                  entry =>
+                    `${entry.amount ?? 'amount not observable'} → ${show(entry.destTokenAccount)} (${entry.role}` +
+                    `${entry.destOwner === null ? '' : `, owner ${show(entry.destOwner)}`})`,
+                )
+                .join('; '),
+      );
+      lines.push(capLine(leg));
     }
 
     lines.push(`      checks  ${summarizeChecks(leg.checks)}`);

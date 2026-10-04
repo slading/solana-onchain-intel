@@ -5,8 +5,10 @@
  * The section is a report of a proof, so these tests are about the *shape* of that
  * report: the semantic result first, the raw amounts and roles as evidence, every
  * condition that did not pass named, and no verdict the layer has not earned.
- * There is no BUY/SELL labelling anywhere: whether a swap is a "buy" depends on
- * what the reader considers the quote asset, which is not a fact this layer has.
+ * No BUY/SELL verdict is ever printed: the only places those words appear are the
+ * instruction names the programs themselves declare (`pump_amm buy` / `pump_amm
+ * sell`, since 4.2/4.3), because whether a swap *is* a "buy" depends on what the
+ * reader considers the quote asset, which is not a fact this layer has.
  */
 import { describe, expect, it } from 'vitest';
 import { stringifyJson } from '../src/lib/format.ts';

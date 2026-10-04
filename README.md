@@ -841,3 +841,129 @@ leg block renders byte-for-byte as it did in 4.1.
 - **The router's own intent.** A routed sell is reported as a pool sell plus the router's other
   legs, never as one aggregated swap.
 - **Price, PnL and "was this a good trade".** Not computed, not approximated.
+
+## Milestone 4.3 — pump_amm `buy` recognition
+
+Milestones 4.1 and 4.2 recognized one instruction each. This milestone adds the third instruction,
+and only the third: **was this a `buy` on the pump_amm program, and exactly what did it claim?**
+The direction is the instruction's own name, so nothing about it has to be inferred from token
+movement — and nothing is: the words "buy" and "sell" exist in the output only as the instruction
+names `pump_amm` itself declares. There is still no registry, no plugin list, and no shared "AMM"
+abstraction; one recognizer file and one line that calls it.
+
+### Scope: one program, one instruction
+
+- **Recognized:** `buy` (`66063d1201daebea`) of `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`
+  (`pump_amm`), per `pump-fun/pump-public-docs` → `idl/pump_amm.json`.
+- **Three real call forms:** a legacy direct `buy` (`legacy-success-pump-buy`, `[6]`), a routed
+  `buy` under a router CPI (`v0-success-pump-buy-24b`, `[3.8]`), and a real failure
+  (`v0-failed-pump-buy-slippage`, `[5]`, the program's own `ExceededSlippage` 6004).
+- **Not recognized, deliberately:** `buy_exact_quote_in` (`c62e1552b4d9e870`) and every other
+  pump_amm instruction, any new Jupiter route semantics, and any "a token came in and another went
+  out, so it was a buy" heuristic.
+
+### How a leg is proven
+
+A `PumpBuyLeg` exists only when all of this holds; each step is one entry in the leg's `checks`
+array, which is fixed at 20 entries in a fixed order:
+
+| # | Condition | Required |
+| --- | --- | --- |
+| 1 | the instruction's program id is the pump_amm program | yes |
+| 2 | its first 8 bytes are the `buy` discriminator (re-derived from `sha256('global:buy')`) | yes |
+| 3 | its arguments parse with **exact** byte consumption — `base_amount_out: u64 @8`, `max_quote_amount_in: u64 @16`, 24 bytes, or 25 with a trailing `OptionBool` byte in `{0x00, 0x01}` | yes |
+| 4 | the 23 named IDL roles are present in IDL order (the tail is counted, never assumed) | yes |
+| 5 | the instruction's CPI subtree is available (a CPI depth is known, inner instructions were recorded) | yes |
+| 6–7 | exactly one transfer into the named user base account and one into the named pool quote vault, **inside that subtree** | yes |
+| 8–9 | those transfers' mints are the instruction's named `base_mint` and `quote_mint`, on opposite sides | yes |
+| 10–11 | the base transfer's source is `pool_base_token_account`, and the payment's source is `user_quote_token_account` | yes |
+| 12 | the base transfer's amount equals the instruction's `base_amount_out` **exactly** | yes |
+| 13 | the user's spend is fully enumerated: every outflow of the named user quote account in the subtree appears in the effects model, and nothing else does | yes |
+| 14 | a bound is stated at all — `max_quote_amount_in != u64::MAX`; the maximum u64 is recorded as "no limit stated" | no — informational, and an unknown |
+| 15 | the total spend is inside that bound, when one is stated and check 13 passed | no — see below |
+| 16 | the payment was authorized by the account's reported owner | no — informational |
+| 17–19 | both transfers and **every fee transfer** appear in the Milestone 3 effects model at the same instruction reference, with the same endpoints, mint, amount, `amountSource: 'instruction-data'` and a committed state | yes |
+| 20 | the transaction itself succeeded | yes |
+
+**The user's spend is the payment plus every other outflow of the named user quote account.**
+Those outflows are found in the instruction's own CPI subtree and classified by destination
+identity: `protocol-fee-recipient`, `coin-creator-vault`, or `other`. They are listed with their
+amounts and destination owners, and they are **counted in the total** — a fee the user paid is part
+of what the user paid. A `BuyEvent` or a log line is never consulted, and never sufficient: the
+real failed fixture carries a full `BuyEvent` and still reports `not-committed`.
+
+**`max_quote_amount_in` bounds that total, and is only ever reported as satisfied when it can be.**
+A finite cap is compared with the *total* spend (in the routed fixture the vault transfer alone is
+below the cap while the total is exactly equal to it); `u64::MAX` means the instruction states no
+binding limit, which is reported as `not-checkable` with the unknown `max-quote-amount-in-unbounded`
+and never as a satisfied cap; `0` is a real bound of zero, evaluated literally — this is **not**
+`sell`'s "`min_quote_amount_out = 0` means no floor" rule, and the two never share a code path.
+Before any of that, the completeness gate of check 13 must pass: if an outflow of the user's quote
+account is missing from the enumeration, or an attributed outflow is absent from the effects model,
+the cap check is `not-checkable` and `user-quote-spend-not-fully-enumerated` is recorded — a
+silently incomplete enumeration can never look like a satisfied bound.
+
+**Two payload forms are recorded, not interpreted.** Live mainnet carries both a 24-byte `buy`
+payload and a 25-byte one whose last byte is `0x00` or `0x01`. The layer accepts exactly those,
+records which form it saw (`trackVolumeByte`), and states that it does not know why both exist: the
+24-byte form is *not* read as `false`, and no fetched revision of the vendor IDL declares it.
+
+### Output
+
+```
+  [6]  buy  pool CzTw…nk8y  quote → base  committed  proven
+      in    2343923556 raw units  mint So11…1112  token account ARBC…fjCJ  owner 9KHS…evjp  leg [6.2]
+      out   4734094242460 raw units  mint AJAa…pump  token account 4DeB…ZS5c  owner 9KHS…evjp  leg [6.1]
+      roles  global_config ADyA…JKqw  pool_base 5S1e…faPk  pool_quote 4Up7…GaQd  base_mint AJAa…pump  quote_mint So11…1112  remaining 3
+      fees   3 other outflow(s) of the user's quote account, counted in the spend: 584812 → 94qW…YDjb (protocol-fee-recipient, owner 62qc…fNgV); 22222829 → B8T8…xWK7 (coin-creator-vault, owner C69k…Re9b); 584811 → HjQj…Sr8i (other, owner 5YxQ…vxeD)
+      cap  max_quote_amount_in 2980000000 — an upper bound on the user's total quote spend; the spend 2367316008 (2343923556 into the pool quote vault + 23392452 in 3 other outflow(s)) satisfies it
+      checks  20 pass • 0 fail • 0 not-checkable
+```
+
+A failed buy renders as `reverted  NOT COMMITTED (transaction failed)` with a note that the
+amounts below are attempted movement, and its cap line says the bound was never tested. The
+section's header and footer, and its "nothing recognized" sentence, now name `pump_amm buy/sell`
+— that is the whole of the change to what 4.1 and 4.2 print, and it is pinned by their tests.
+
+### Fixtures
+
+Six real mainnet buys, all harvested with the repository's own tool:
+
+- `legacy-success-pump-buy.json` — the canonical direct buy: 25-byte payload `0x01`, 13454552763
+  base out, 97750000 cap, three fee outflows, total spend 84441000.
+- `v0-success-pump-buy-24b.json` — the routed 24-byte buy, whose total spend (22914125) is exactly
+  its cap; also proves the buy's subtree does not swallow its sibling instructions' movements.
+- `v0-success-pump-buy-24b-direct.json` — a direct 24-byte buy, so the payload form is covered
+  without routing.
+- `v0-success-pump-buy-25b-false.json` — the 25-byte form whose byte is `0x00`, and a buy whose
+  quote side is a token while the base side is SOL.
+- `v0-success-pump-buy-unbounded.json` — `max_quote_amount_in = u64::MAX`, in a transaction that
+  also holds a pump `sell` (two legs, no cross-talk).
+- `v0-failed-pump-buy-slippage.json` — reverted by the program's own `ExceededSlippage`: no
+  transfers at all, so nothing is presented as committed and no cap is tested.
+
+### Tests
+
+`tests/pump.buy.test.ts` (25), `tests/pump.buy.fixtures.test.ts` (38),
+`tests/pump.buy.adversarial.test.ts` (20), `tests/render.swaps.buy.test.ts` (9): the derived
+discriminator, exact byte consumption in both payload forms, the 23-role IDL order, six real
+fixtures end to end, the spend and its fee outflows, the completeness gate, cap satisfied /
+exactly binding / violated / zero / `u64::MAX` / uncommitted, commit states, log and event
+independence, look-alikes, truncation, invalid trailing bytes, swapped mints/vaults/user accounts,
+ambiguous duplicates, a payment from the wrong account, a transfer to itself, missing CPI
+recording, absent effects, payload-form equivalence, purity and determinism, and the golden
+section. `--no-swaps` is verified byte-identical to the frozen Milestone 3 output over all 13
+fixtures (272258 bytes), and both the 4.1 DLMM and the 4.2 sell recognizers produce byte-identical
+output for every pre-4.3 fixture.
+
+### Semantics still unknown (deliberately)
+
+- **Why two payload forms exist.** Both are live in the same slot range; the 24-byte form is
+  recorded as `absent` and never read as `false`, because the mechanism is unknown.
+- **What the tail accounts are.** 2 or 3 of them, counted and never named; the last one is
+  empirically the destination of one fee transfer, which is why outflows are *enumerated* rather
+  than predicted.
+- **Whether fee legs can be anything else.** Cashback was zero in every observed buy; a future
+  cashback leg simply appears as another `other` outflow.
+- **`buy_exact_quote_in` and every other pump_amm instruction.** Unrecognized, silently.
+- **Price, PnL and "was this a good trade".** Not computed, not approximated.

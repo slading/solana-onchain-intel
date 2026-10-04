@@ -203,8 +203,8 @@ export type SwapOwnerEvidence = DlmmOwnerEvidence;
 export type SwapAmountEvidence = DlmmAmountEvidence;
 export type SwapDiagnostic = DlmmSwapDiagnostic;
 
-/** Any recognized AMM leg (M4.1 DLMM or M4.2 pump). Discriminated by `protocol`. */
-export type SwapLeg = DlmmSwapLeg | PumpSellLeg;
+/** Any recognized AMM leg (M4.1 DLMM, M4.2 pump sell, M4.3 pump buy). */
+export type SwapLeg = DlmmSwapLeg | PumpSellLeg | PumpBuyLeg;
 
 /**
  * Everything the swap layer concluded about one transaction, across protocols.
@@ -298,6 +298,91 @@ export interface PumpSellLeg {
   readonly roles: PumpSellRoles;
   /** Every quote-vault transfer that is not the user's output, in execution order. */
   readonly feeTransfers: readonly PumpSellFeeTransfer[];
+  /** Every condition that was evaluated, in a fixed order. */
+  readonly checks: readonly SwapCheck[];
+  /** Ids of the checks that failed. Non-empty ⇒ `state === 'conflicting'`. */
+  readonly conflicts: readonly string[];
+  /** Machine ids for things that could not be established at all. */
+  readonly unknowns: readonly string[];
+  readonly diagnostics: readonly SwapDiagnostic[];
+}
+
+/* --------------------------------------------------------------- pump_amm buy */
+
+/**
+ * The named account roles of `buy`: the same reduced set as `sell`, read at
+ * `buy`'s own indices. `buy` declares `sell`'s first 19 roles, then the two
+ * volume accumulators, then `fee_config`/`fee_program` (`./pump.ts` holds the
+ * full 23-role list) — so the roles this layer relies on are identical in name
+ * and order, and the two share the type rather than duplicating it.
+ */
+export type PumpBuyRoles = PumpSellRoles;
+
+/** Where an outflow of the user's quote account went, on the evidence available. */
+export type PumpBuyFeeTransferRole = PumpFeeTransferRole;
+
+/**
+ * A transfer out of the user's quote account that is **not** the payment into the
+ * pool's quote vault (protocol fee, coin-creator fee, or something else).
+ *
+ * Unlike a sell's fee transfers — which are the pool paying other parties — these
+ * are part of **the user's own spend**: they are listed so the spend can be
+ * decomposed by destination, and they are counted in the total the instruction's
+ * `max_quote_amount_in` bounds.
+ */
+export interface PumpBuyFeeTransfer {
+  /** The transfer instruction itself. */
+  readonly ref: InstructionRef;
+  readonly destTokenAccount: string | null;
+  readonly destOwner: string | null;
+  readonly destOwnerEvidence: SwapOwnerEvidence;
+  readonly amount: bigint | null;
+  readonly mint: string | null;
+  readonly role: PumpBuyFeeTransferRole;
+}
+
+/** One recognized pump_amm `buy`, with everything it was proven from. */
+export interface PumpBuyLeg {
+  readonly protocol: 'pump-amm';
+  readonly programId: string;
+  readonly instructionName: 'buy';
+  readonly ref: InstructionRef;
+  readonly commitState: SwapCommitState;
+  readonly state: SwapState;
+  /** The payment: the transfer out of the user's quote account into the pool's quote vault. */
+  readonly input: SwapSide;
+  /** What was received: the transfer out of the pool's base vault into the user's base account. */
+  readonly output: SwapSide;
+  /** The instruction's `base_amount_out` argument, verbatim. */
+  readonly baseAmountOut: bigint | null;
+  /**
+   * The instruction's `max_quote_amount_in` argument, verbatim.
+   * `u64::MAX` means "no binding limit stated" — see `max-quote-amount-in-unbounded`.
+   */
+  readonly maxQuoteAmountIn: bigint | null;
+  /**
+   * The trailing `OptionBool` byte of the payload, recorded verbatim.
+   * `'absent'` is the 24-byte form; the value is never used as evidence.
+   */
+  readonly trackVolumeByte: 'absent' | '0x00' | '0x01';
+  readonly roles: PumpBuyRoles;
+  /**
+   * Every other outflow of the user's quote account inside this instruction, in
+   * execution order. These are *included* in `quoteSpend`, never in the output.
+   */
+  readonly feeTransfers: readonly PumpBuyFeeTransfer[];
+  /**
+   * The user's total quote spend (the payment plus every fee transfer), or `null`
+   * when it could not be attributed — a missing subtree, or a payment that was
+   * never identified.
+   */
+  readonly quoteSpend: bigint | null;
+  /**
+   * True only when the enumerated outflows provably cover every Milestone 3 flow
+   * that leaves the user's quote account inside this instruction. The cap check
+   * is never reported as satisfied while this is false.
+   */
+  readonly quoteSpendComplete: boolean;
   /** Every condition that was evaluated, in a fixed order. */
   readonly checks: readonly SwapCheck[];
   /** Ids of the checks that failed. Non-empty ⇒ `state === 'conflicting'`. */

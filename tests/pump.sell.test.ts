@@ -53,9 +53,9 @@ describe('authoritative pump_amm surface', () => {
     expect(PUMP_AMM_SELL_DISCRIMINATOR).toBe('33e685a4017f83ad');
   });
 
-  it('records the buy discriminator without ever recognizing it', () => {
-    // `sha256("global:buy")[..8]`, present only as a guard: the layer must not
-    // accept a buy as a sell.
+  it('derives the buy discriminator, and never accepts a buy as a sell', () => {
+    // `sha256("global:buy")[..8]`. Since Milestone 4.3 the buy has its own
+    // recognizer; what is asserted here is only that *this* one never reads it.
     expect(createHash('sha256').update('global:buy').digest('hex').slice(0, 16)).toBe(
       PUMP_AMM_BUY_DISCRIMINATOR,
     );

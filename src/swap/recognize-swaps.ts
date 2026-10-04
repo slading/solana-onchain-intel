@@ -4,7 +4,8 @@
  *
  * There is deliberately no registry and no plugin list — `scannedProtocols` is a
  * literal, and each protocol's recognition code is a plain function call below.
- * Adding a protocol means adding a recognizer and a line, with its own tests.
+ * Adding a protocol — or, as in 4.3, another instruction of a protocol already
+ * covered — means adding a recognizer and a line, with its own tests.
  *
  * Diagnostics are merged deterministically:
  *
@@ -21,6 +22,7 @@ import type { InstructionRef } from '../decode/actions.ts';
 import type { TransactionEffects } from '../effects/model.ts';
 import type { SwapDiagnostic, SwapLeg, SwapProtocol, SwapReport } from './model.ts';
 import { recognizeDlmmSwaps } from './recognize.ts';
+import { recognizePumpBuys } from './pump-buy-recognize.ts';
 import { recognizePumpSells } from './pump-recognize.ts';
 
 /** Every protocol this build can recognize, in a fixed order. */
@@ -49,15 +51,16 @@ export function recognizeSwaps(
   const effects = options.effects ?? null;
 
   const dlmm = recognizeDlmmSwaps(transaction, { effects });
-  const pump = recognizePumpSells(transaction, { effects });
+  const pumpSells = recognizePumpSells(transaction, { effects });
+  const pumpBuys = recognizePumpBuys(transaction, { effects });
 
-  const legs: SwapLeg[] = [...dlmm.legs, ...pump.legs].sort((left, right) =>
+  const legs: SwapLeg[] = [...dlmm.legs, ...pumpSells.legs, ...pumpBuys.legs].sort((left, right) =>
     compareRefs(left.ref, right.ref),
   );
 
   const diagnostics: SwapDiagnostic[] = [];
   const seenTransactionCodes = new Set<string>();
-  for (const note of [...dlmm.diagnostics, ...pump.diagnostics]) {
+  for (const note of [...dlmm.diagnostics, ...pumpSells.diagnostics, ...pumpBuys.diagnostics]) {
     if (note.ref === null) {
       if (seenTransactionCodes.has(note.code)) continue;
       seenTransactionCodes.add(note.code);

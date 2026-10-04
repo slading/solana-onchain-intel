@@ -1,9 +1,10 @@
 /**
  * Every recorded mainnet fixture, through the effects layer.
  *
- * These six transactions are the only real data in the repository, so they are
- * where the layer has to hold up: no unexplained movement, no violated invariant,
- * no invented counterparty — and the same answer every time it is asked.
+ * These transactions are the only real data in the repository, so they are where
+ * the layer has to hold up: no unexplained movement beyond the one documented
+ * program the layer does not decode (below), no violated invariant, no invented
+ * counterparty — and the same answer every time it is asked.
  *
  * The fixture-level arithmetic is checked here *independently* of the layer's own
  * diagnostics: the deltas are summed by hand from the normalized model and
@@ -23,6 +24,29 @@ function effectsOfFixture(name: string) {
 
 const FIXTURES = allFixtureNames();
 
+/**
+ * Lamport movement a real transaction made that this layer deliberately leaves
+ * unattributed, per fixture, named account by account.
+ *
+ * `v0-success-pump-buy-24b` carries pump's own `close_user_volume_accumulator`
+ * (discriminator `f945a4da9667548a`), which returns the user volume accumulator's
+ * rent to the user. That program is not decoded here, and the layer's rule is to
+ * *report* such movement rather than guess a sender — so the two accounts involved
+ * reconcile as `residual` and the pair appears in `unattributedEffects`. Milestone
+ * 4.3 discovery §5.1 records the same pair.
+ *
+ * Listing the exact addresses (rather than allowing "some residual") keeps every
+ * other fixture pinned to exact reconciliation and keeps this one from quietly
+ * growing more; the entries are still required to be SOL, `ambiguous`, and without
+ * candidate refs, i.e. explained *as* unexplained.
+ */
+const UNEXPLAINED_SOL: Readonly<Record<string, readonly string[]>> = {
+  'v0-success-pump-buy-24b': [
+    'uLhhyDHziqGRF2GLhJnSCu4AcRkWhF2rWBYLAncheVT',
+    'DMY587xWCGwdq47Yxb8V9hq9TnUCRhhumxicYQhLLsBp',
+  ],
+};
+
 describe.each(FIXTURES)('%s', name => {
   const { transaction, effects } = effectsOfFixture(name);
 
@@ -32,9 +56,19 @@ describe.each(FIXTURES)('%s', name => {
   });
 
   it('explains every account it says it explained, and leaves nothing unexplained', () => {
-    expect(effects.unattributedEffects).toEqual([]);
+    const allowed = new Set(UNEXPLAINED_SOL[name] ?? []);
+    expect(new Set(effects.unattributedEffects.map(entry => entry.address))).toEqual(allowed);
+    for (const entry of effects.unattributedEffects) {
+      expect(entry.side, `sol ${entry.address ?? '(no address)'}`).toBe('sol');
+      expect(entry.confidence, `sol ${entry.address ?? '(no address)'}`).toBe('ambiguous');
+      expect(entry.candidateRefs, `sol ${entry.address ?? '(no address)'}`).toEqual([]);
+    }
     for (const net of effects.netSolByAccount) {
       if (net.netLamports === null || net.netLamports === 0n) continue;
+      if (net.address !== null && allowed.has(net.address)) {
+        expect(net.reconciliation, `sol ${net.address}`).toBe('residual');
+        continue;
+      }
       expect(net.residualLamports, `sol ${net.address ?? '(no address)'}`).toBe(0n);
       expect(net.reconciliation, `sol ${net.address ?? '(no address)'}`).toBe('exact');
     }
