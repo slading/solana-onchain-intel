@@ -1,6 +1,7 @@
 import { renderActionSection } from './actions.ts';
 import { renderEffectsSection } from './effects.ts';
 import { renderSwapSection } from './swaps.ts';
+import { renderRouteSection } from './routes.ts';
 import {
   formatLamportsWithSol,
   formatSigned,
@@ -16,6 +17,7 @@ import type {
 } from '../model/transaction.ts';
 import type { TransactionEffects } from '../effects/model.ts';
 import type { SwapReport } from '../swap/model.ts';
+import type { RouteReport } from '../route/model.ts';
 
 /**
  * Renders the deterministic, human-readable summary.
@@ -28,9 +30,10 @@ import type { SwapReport } from '../swap/model.ts';
  * Long lists are elided for readability only (`MAX_LISTED_ADDRESSES`); the full
  * values are always available via `--json`.
  *
- * Sections appear in a fixed order: header, INSTRUCTIONS, ACTIONS, SWAPS,
+ * Sections appear in a fixed order: header, INSTRUCTIONS, ACTIONS, SWAPS, ROUTES,
  * EFFECTS, SOL BALANCE CHANGES, TOKEN BALANCE CHANGES, LOGS, DIAGNOSTICS. SWAPS
- * (Milestone 4.1) is present only when a swap model is supplied.
+ * (Milestone 4.1) and ROUTES (Milestone 4.4) are present only when their model is
+ * supplied, so a caller that omits them renders exactly what it rendered before.
  */
 const MAX_LISTED_ADDRESSES = 4;
 const LABEL_WIDTH = 13;
@@ -66,6 +69,15 @@ export interface RenderOptions {
   readonly swaps?: SwapReport | null;
   /** Print only the SWAPS section (the CLI's `--swaps`). */
   readonly onlySwaps?: boolean;
+  /**
+   * The route model to render (Milestone 4.4): Jupiter `route_v2` envelopes. As
+   * with `effects` and `swaps`, the renderer never computes it itself, and the
+   * section appears exactly when a model is supplied — so `--no-routes` reproduces
+   * the previous output byte-for-byte.
+   */
+  readonly routes?: RouteReport | null;
+  /** Print only the ROUTES section (the CLI's `--routes`). */
+  readonly onlyRoutes?: boolean;
 }
 
 function field(label: string, value: string): string {
@@ -153,6 +165,21 @@ export function renderSummary(
     } else {
       lines.push('');
       lines.push('SWAPS (not computed)');
+    }
+    return lines.join('\n');
+  }
+
+  if (options.onlyRoutes === true) {
+    lines.push('');
+    lines.push(`TRANSACTION ${transaction.signature === '' ? '(no signature)' : transaction.signature}`);
+    if (options.routes !== undefined && options.routes !== null) {
+      lines.push('');
+      lines.push(
+        ...renderRouteSection(options.routes, { abbreviateAddresses: options.fullAddresses !== true }),
+      );
+    } else {
+      lines.push('');
+      lines.push('ROUTES (not computed)');
     }
     return lines.join('\n');
   }
@@ -284,6 +311,16 @@ export function renderSummary(
     lines.push('');
     lines.push(
       ...renderSwapSection(options.swaps, {
+        abbreviateAddresses: options.fullAddresses !== true,
+      }),
+    );
+  }
+
+  // -------------------------------------------------------------------- routes
+  if (options.routes !== undefined && options.routes !== null) {
+    lines.push('');
+    lines.push(
+      ...renderRouteSection(options.routes, {
         abbreviateAddresses: options.fullAddresses !== true,
       }),
     );

@@ -12,6 +12,7 @@ import { byteSize } from '../lib/byte-size.ts';
 import { stringifyJson } from '../lib/format.ts';
 import { transactionEffects } from '../effects/build.ts';
 import { recognizeSwaps } from '../swap/recognize-swaps.ts';
+import { recognizeRoutes } from '../route/recognize-routes.ts';
 import { normalizeTransaction, NormalizationError } from '../normalize/transaction.ts';
 import { renderSummary } from '../render/summary.ts';
 import { createRpc, resolveCommitment, resolveRpcUrl } from '../rpc/client.ts';
@@ -36,12 +37,14 @@ Options:
   --actions            Print only the ACTIONS section (decoded semantics)
   --effects            Print only the EFFECTS section (value movement + net change)
   --swaps              Print only the SWAPS section (recognized AMM swaps)
+  --routes             Print only the ROUTES section (recognized Jupiter route_v2 envelopes)
   --full-addresses     Print exact addresses in ACTIONS/EFFECTS instead of abbreviated
   --no-actions         Omit the ACTIONS section from the text summary
   --no-effects         Omit the EFFECTS section from the text summary
-  --no-swaps           Omit the SWAPS section from the text summary
+  --no-swaps           Omit the SWAPS and ROUTES sections from the text summary
+  --no-routes          Omit the ROUTES section from the text summary
   --no-logs            Omit program logs from the text summary
-  --out <file>         Also write { normalized, effects, swaps, raw } JSON to <file>
+  --out <file>         Also write { normalized, effects, swaps, routes, raw } JSON to <file>
   -h, --help           Show this help
 
 Exit codes:
@@ -65,6 +68,13 @@ Notes:
   fee transfers are reported separately and never counted as proceeds. A leg is
   never labelled a buy or a sell beyond the instruction's own name, and a failed
   transaction yields no committed swap.
+  ROUTES recognize a Jupiter route_v2 instruction as an ENVELOPE, not a swap: it
+  owns the declared input, the quote, the slippage tolerance, the platform-fee rate
+  and the decoded plan (step by step, each with its own SwapType width), plus
+  references to the instructions the route dispatched. It owns no executed amount —
+  movement stays with the legs and with EFFECTS — and it never reads the route's own
+  event records, which a reverted fixture emits anyway. Unknown plan encodings,
+  unproven variant names and unproven index arithmetic stay unknown.
 `.trim();
 
 interface Args {
@@ -80,6 +90,8 @@ interface Args {
   noEffects: boolean;
   swapsOnly: boolean;
   noSwaps: boolean;
+  routesOnly: boolean;
+  noRoutes: boolean;
   fullAddresses: boolean;
   out: string | null;
   help: boolean;
@@ -99,6 +111,8 @@ function parseArgs(argv: readonly string[]): Args {
     noEffects: false,
     swapsOnly: false,
     noSwaps: false,
+    routesOnly: false,
+    noRoutes: false,
     fullAddresses: false,
     out: null,
     help: false,
@@ -142,6 +156,12 @@ function parseArgs(argv: readonly string[]): Args {
         break;
       case '--no-swaps':
         args.noSwaps = true;
+        break;
+      case '--routes':
+        args.routesOnly = true;
+        break;
+      case '--no-routes':
+        args.noRoutes = true;
         break;
       case '--full-addresses':
         args.fullAddresses = true;
@@ -283,6 +303,16 @@ async function main(): Promise<number> {
   const swaps =
     args.noSwaps || args.effectsOnly ? null : recognizeSwaps(normalized, { effects });
 
+  // The route layer reads the canonical model and, when it exists, the swap report —
+  // only to mark which dispatched instructions a frozen recognizer already covered.
+  // It is skipped wherever the swap layer is skipped (`--no-swaps`, `--effects`), so
+  // `--no-swaps` keeps reproducing the pre-4.4 output byte-for-byte, and `--routes`
+  // alone computes it without the swap report.
+  const routes =
+    args.noRoutes || args.effectsOnly || (args.noSwaps && !args.routesOnly)
+      ? null
+      : recognizeRoutes(normalized, { swaps });
+
   if (args.out !== null) {
     writeFileSync(
       args.out,
@@ -290,10 +320,11 @@ async function main(): Promise<number> {
         normalized: stripRaw(normalized),
         effects,
         swaps,
+        routes,
         raw: fetched.raw,
       })}\n`,
     );
-    console.error(`Wrote normalized + effects + swaps + raw JSON to ${args.out}`);
+    console.error(`Wrote normalized + effects + swaps + routes + raw JSON to ${args.out}`);
   }
 
   if (args.json) {
@@ -301,8 +332,11 @@ async function main(): Promise<number> {
       ...normalized,
       ...(effects === null ? {} : { effects }),
       ...(swaps === null ? {} : { swaps }),
+      ...(routes === null ? {} : { routes }),
     };
-    console.log(stringifyJson(effects === null && swaps === null ? normalized : payload));
+    console.log(
+      stringifyJson(effects === null && swaps === null && routes === null ? normalized : payload),
+    );
     return EXIT_OK;
   }
 
@@ -313,8 +347,10 @@ async function main(): Promise<number> {
       onlyActions: args.actionsOnly,
       onlyEffects: args.effectsOnly,
       onlySwaps: args.swapsOnly,
+      onlyRoutes: args.routesOnly,
       effects,
       swaps,
+      routes,
       fullAddresses: args.fullAddresses,
     }),
   );

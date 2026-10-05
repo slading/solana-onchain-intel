@@ -95,6 +95,52 @@ export type { PumpSellRecognition, RecognizePumpOptions } from './swap/pump-reco
 // Milestone 4.3: the other pump_amm instruction, with its own mirrored evidence.
 export { recognizePumpBuys } from './swap/pump-buy-recognize.ts';
 export type { PumpBuyRecognition, RecognizePumpBuyOptions } from './swap/pump-buy-recognize.ts';
+// Milestone 4.4: Jupiter `route_v2` as a route ENVELOPE — intent, quote, plan and
+// references to dispatched instructions; never a movement of its own.
+export { recognizeRoutes } from './route/recognize-routes.ts';
+export type { RecognizeRoutesOptions } from './route/recognize-routes.ts';
+export { renderRouteSection } from './render/routes.ts';
+export type { RouteRenderOptions } from './render/routes.ts';
+export {
+  JUPITER_ROUTE_V2_DISCRIMINATOR,
+  JUPITER_V6_PROGRAM_ID,
+  ROUTE_INFRASTRUCTURE_PROGRAMS,
+  ROUTE_PLAN_VARIANTS,
+  ROUTE_V2_ACCOUNT_ROLES,
+  ROUTE_V2_FIXED_ACCOUNT_COUNT,
+  parseRouteV2Header,
+  parseRouteV2Plan,
+  provenLegInstructionName,
+  routePlanVariant,
+} from './route/jupiter.ts';
+export type {
+  RoutePlanParse,
+  RoutePlanStepRead,
+  RoutePlanVariant,
+  RoutePlanVariantField,
+  RoutePlanVariantSource,
+  RouteV2Header,
+  RouteV2HeaderParse,
+  RouteV2Role,
+} from './route/jupiter.ts';
+export type {
+  JupiterRouteEnvelope,
+  RouteAccounts,
+  RouteCheck,
+  RouteCheckOutcome,
+  RouteCommitState,
+  RouteCounts,
+  RouteDiagnostic,
+  RouteIntent,
+  RouteLeg,
+  RouteLegAccounting,
+  RouteLegSwapReference,
+  RoutePlan,
+  RoutePlanAlignment,
+  RoutePlanAlignmentStatus,
+  RouteReport,
+  RouteState,
+} from './route/model.ts';
 export { renderSwapSection } from './render/swaps.ts';
 export type { SwapRenderOptions } from './render/swaps.ts';
 export type {
