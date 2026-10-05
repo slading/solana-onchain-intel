@@ -967,3 +967,119 @@ output for every pre-4.3 fixture.
   cashback leg simply appears as another `other` outflow.
 - **`buy_exact_quote_in` and every other pump_amm instruction.** Unrecognized, silently.
 - **Price, PnL and "was this a good trade".** Not computed, not approximated.
+
+---
+
+## Milestone 5.1 — transaction corpus store
+
+The inspector answers questions about *one* transaction. This milestone adds the layer that
+makes questions about *many* possible: a persistent corpus in a single SQLite file, with one
+rule that everything else follows from.
+
+> **Raw evidence is the source of truth. Normalized, effects, swaps and routes are
+> deterministic, versioned derivations of it — never the source of truth.**
+
+That rule decides the whole design, and it is what makes a new recognizer retroactive: the raw
+response is stored once, so every layer can be re-derived later without asking a node again.
+
+### Running it
+
+The store uses the built-in `node:sqlite` module, so **the storage commands need Node ≥ 22.5**
+and add no dependency at all — no `better-sqlite3`, no server, no ORM, no migration framework.
+The Milestone 1–4.4 `inspect` path still runs on Node ≥ 20.18, which is why `engines` is the only
+front-matter this milestone changed.
+
+```bash
+# One transaction, by signature (bounded, and resumable when it is an address)
+npm run store -- ingest <SIGNATURE> --store corpus.db [--rpc <url>] [--commitment <level>]
+npm run store -- ingest --fixture fixtures/v0-success-swap.json --store corpus.db
+npm run store -- run <ADDRESS> --store corpus.db --max 20 [--page-limit 50]
+
+# Render a stored transaction. Never touches the network.
+npm run store -- print <SIGNATURE> --store corpus.db [--json|--raw|--normalized|--evidence|--fetch-history]
+npm run store -- print <SIGNATURE> --store corpus.db --no-counts      # byte-identical to `npm run inspect`
+
+# Re-derive from the stored evidence. Never touches the network, never rewrites evidence.
+npm run store -- reanalyze <SIGNATURE> --store corpus.db [--prune-old-versions]
+npm run store -- reanalyze --all --store corpus.db [--stale-only] [--prune-old-versions]
+
+# What the corpus holds, and the two corpus-level questions it exists to answer
+npm run store -- status --store corpus.db [--json]
+npm run store -- route-legs --store corpus.db [--json]
+npm run store -- movement <ADDRESS> --store corpus.db [--json]
+```
+
+Exit codes: `0` success (stored, or already held), `1` signature not found / absent from the
+store, `2` usage error, `3` RPC or store error, `4` retryable RPC failure (`run` leaves its
+cursor before the failed signature, so re-running the same command resumes).
+
+### What is stored
+
+Five tables, and no protocol semantics in any of them — that lives inside the versioned JSON
+artifacts, which is why a new recognizer needs no migration.
+
+| table | holds | notes |
+| --- | --- | --- |
+| `transactions` | identity + evidence-derived metadata, one row per signature | amounts and slots are exact decimal TEXT, never REAL/INTEGER |
+| `raw_responses` | the durable raw `getTransaction` result, once per signature | with its provenance, its SHA-256, and the quality dimensions it was observed at |
+| `fetches` | append-only attempt history: `stored`, `stored-upgraded`, `unchanged-equal-quality`, `skipped-lower-quality`, `not-found`, `rpc-error`, `normalization-error` | a not-found is history, not a statement that a transaction does not exist, and it never blocks a later success |
+| `derived` | `normalized` / `effects` / `swaps` / `routes` per `(signature, layer, semantics_version)` | replacing one layer replaces all four for that signature; artifacts are canonical text with their own hash |
+| `ingest_cursors` | resume state for bounded address ingestion | cleared to `incomplete` for a fresh sweep once an address has been swept to the end |
+
+`store_meta` records the format version and the codec version; opening a store written by
+another one fails loudly rather than guessing (M5.1 has no migration framework, deliberately).
+
+### Evidence quality: the same transaction, seen twice
+
+A node can report a transaction with less evidence than another node did — no `meta`, no
+recorded CPI tree, no token balances, no `blockTime`, no logs, or at a lower commitment. The
+store therefore never overwrites what it already holds with something worse. The rule
+(`src/store/quality.ts`) is total and order-independent:
+
+1. **meta present** first — without it there is no status, no fee and no balancing at all;
+2. **completeness** (inner instructions 8, token balances 4, block time 2, logs 1);
+3. **commitment** last (`processed` < `confirmed` < `finalized`), because it decides finality
+   claims rather than how much can be derived.
+
+A tie keeps what is stored, so repeated ingestion is byte-for-byte idempotent: the same
+transaction ingested twice produces one canonical row, one evidence row, four artifacts and two
+history rows — and the second ingest says `unchanged-equal-quality`. If the new observation is
+stronger, the evidence *is* replaced, and every artifact derived from the old evidence is
+deleted and re-derived in the same SQLite transaction, so nothing derived can outlive the
+evidence it came from.
+
+### Versioning and re-analysis
+
+`DERIVED_SEMANTICS_VERSION` (currently `m1+m2+m3+m4.1+m4.2+m4.3+m4.4`) names the engine that
+produced an artifact, and it only changes when an engine's output can change.
+`tests/store.semantics-version.test.ts` fingerprints the derivation over all 13 fixtures, so a
+semantic change without a version bump fails the build.
+
+Adding a recognizer is therefore a two-step operation: bump the constant, run
+`npm run store -- reanalyze --all`. The new rows are written under the new version; rows written
+by the old engine stay in the table as history, are reported as stale in `print`/`status`, and
+are never served as current. The raw evidence is not touched by any of it — re-analysis makes no
+RPC request, and deleting every derived row and rebuilding reproduces byte-identical artifacts.
+
+### Failed transactions
+
+A reverted transaction is ordinary corpus data: its fee is committed, and the instructions that
+rolled back are the frozen M3/M4 semantics' `uncommitted*` collections. The storage layer adds no
+interpretation of its own, and the corpus query for one account (`store movement`) reads only the
+committed collections — so an address that was the destination of a *reverted* transfer reports
+zero movement, with the transaction counted as involvement and explicitly not as movement.
+
+### Tests and verification
+
+`store.ingest` / `store.evidence-quality` / `store.integers` / `store.reanalysis` /
+`store.ingest-address` / `store.schema` / `store.queries` / `store.roundtrip` /
+`store.semantics-version` / `store.quality` / `store.cli` (plus `tests/helpers/store.ts`) run every
+storage suite offline: a scripted `CorpusRpcLike` fake covers addresses, rate limits, transport
+failures and paging, and `tests/store.roundtrip.test.ts` asserts stored artifacts equal the live
+derivation for all 13 fixtures.
+
+`scripts/verify-store-print.sh` proves the stronger statement with both real CLIs, offline: it
+serves the fixtures from `scripts/mock-rpc-fixtures.mjs` (a local JSON-RPC node), ingests each
+fixture through the storage CLI, and compares `store print --json` with `inspect --json` byte for
+byte — 13/13 — plus the text output, which differs only by the single trailing `store:` line that
+`--no-counts` removes.

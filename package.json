@@ -5,10 +5,11 @@
   "description": "Solana On-chain Intelligence Assistant — Milestone 1: fetch a transaction from RPC, normalize it into our own model, print a readable CLI summary.",
   "type": "module",
   "engines": {
-    "node": ">=20.18.0"
+    "node": ">=22.5.0"
   },
   "scripts": {
     "inspect": "tsx src/cli/inspect.ts",
+    "store": "tsx src/cli/store.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
